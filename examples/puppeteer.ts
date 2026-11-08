@@ -30,7 +30,7 @@ try {
     outputPath: 'puppeteer-demo.mp4',
   });
 
-  await page.goto('https://example.com', {waitUntil: 'domcontentloaded'});
+  await page.goto('https://paulirish.github.io/chrome-capture-60fps/', {waitUntil: 'domcontentloaded'});
   await new Promise(r => setTimeout(r, 3000));
 
   const mp4 = await recording.stop();

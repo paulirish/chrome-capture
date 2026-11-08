@@ -54,6 +54,11 @@
   ],
   "author": "Paul Irish",
   "license": "Apache-2.0",
+  "homepage": "https://paulirish.github.io/chrome-capture-60fps/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/paulirish/chrome-capture-60fps.git"
+  },
   "devDependencies": {
     "@types/node": "26.6.6",
     "devtools-protocol": "0.0.1734725",

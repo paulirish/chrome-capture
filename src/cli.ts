@@ -10,7 +10,7 @@
  *
  * Usage:
  *   chrome-capture-60fps [url] [output] [duration] [options]
- *   node src/cli.ts https://example.com demo.mp4 4s
+ *   node src/cli.ts https://paulirish.github.io/chrome-capture-60fps/ demo.mp4 4s
  */
 
 import {writeFile} from 'node:fs/promises';
@@ -32,7 +32,7 @@ export async function cli(): Promise<void> {
     console.log(`Usage: chrome-capture-60fps [url] [output] [duration] [options]
 
 Arguments:
-  url                         Target page URL (default: http://localhost:8080/ or https://example.com)
+  url                         Target page URL (default: https://paulirish.github.io/chrome-capture-60fps/)
   output                      Output MP4 file path (default: demo-60fps.mp4)
   duration                    Duration in ms or seconds (e.g. 3000, 3s, 5s) (default: 3000ms)
 
@@ -78,7 +78,7 @@ Options:
     allowPositionals: true,
   });
 
-  const url = parsed.values.url ?? parsed.positionals[0] ?? 'http://localhost:8080/';
+  const url = parsed.values.url ?? parsed.positionals[0] ?? 'https://paulirish.github.io/chrome-capture-60fps/';
   const outPath = parsed.values.out ?? parsed.values.output ?? parsed.positionals[1] ?? 'demo-60fps.mp4';
   const rawDuration = parsed.values.duration ?? parsed.positionals[2];
   const durationMs = parseDuration(rawDuration, 3000);

@@ -22,7 +22,7 @@ const chrome = await launchChrome({
   width: 1280,
   height: 720,
   headless: false,
-  url: 'https://example.com',
+  url: 'https://paulirish.github.io/chrome-capture-60fps/',
 });
 
 try {

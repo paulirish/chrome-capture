@@ -5,7 +5,7 @@ Record a Chrome tab at 60fps (up to 120fps, up to 4K) straight to an AV1 `.mp4`.
 It's a thin wrapper around [`Page.startScreenRecording`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreenRecording), a CDP method that landed in Chrome M153. Chrome does the encoding itself and hands you back an mp4.
 
 ```bash
-npx chrome-capture-60fps https://example.com demo.mp4 4s
+npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ demo.mp4 4s
 ```
 
 Needs Chrome M153+ and Node 24.11+.
@@ -28,16 +28,16 @@ Doesn't Puppeteer have this already? Kinda. Puppeteer 25 deprecated `page.screen
 
 ```bash
 # 720p @ 60fps for 4s, with tab audio
-npx chrome-capture-60fps https://example.com demo.mp4 4s
+npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ demo.mp4 4s
 
 # 4K @ 60fps, no audio
-npx chrome-capture-60fps https://example.com 4k.mp4 5s --width=3840 --height=2160 --no-audio
+npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 4k.mp4 5s --width=3840 --height=2160 --no-audio
 
 # 1080p @ 120fps (needs a 120Hz display and headed Chrome, e.g. a ProMotion MacBook)
-npx chrome-capture-60fps https://example.com 120fps.mp4 5s --fps=120 --width=1920 --height=1080 --headed
+npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 120fps.mp4 5s --fps=120 --width=1920 --height=1080 --headed
 
 # Record the page with DevTools open next to it
-npx chrome-capture-60fps https://example.com devtools.mp4 5s --with-devtools
+npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ devtools.mp4 5s --with-devtools
 ```
 
 The CLI records audio by default and runs headless on Linux, headed on macOS. `--help` for the rest.
@@ -51,7 +51,7 @@ import {startRecording} from 'chrome-capture-60fps';
 
 {
   await using rec = await startRecording(page, {outputPath: 'flow.mp4'});
-  await page.goto('https://example.com');
+  await page.goto('https://paulirish.github.io/chrome-capture-60fps/');
   await page.click('a');
 }
 ```
