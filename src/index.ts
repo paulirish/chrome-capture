@@ -71,9 +71,10 @@ export class CdpScreenRecorder {
    *   readback down to 0.3-11.7 fps.
    */
   async start(options: ScreenRecordingOptions = {}): Promise<Protocol.IO.StreamHandle> {
+    const {outputPath: _outputPath, ...cdpOptions} = options;
     const request: Protocol.Page.StartScreenRecordingRequest = {
       frameRate: 60,
-      ...options,
+      ...cdpOptions,
     };
     const {stream} = await this.session.send('Page.startScreenRecording', request);
     return stream;

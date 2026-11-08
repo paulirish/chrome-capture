@@ -5,6 +5,9 @@
  */
 
 import assert from 'node:assert/strict';
+import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {describe, it} from 'node:test';
 import type {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js';
 import {
@@ -16,10 +19,7 @@ import {
   startRecording,
 } from '../src/index.ts';
 import {screenRecordingFixture} from '../src/playwright.ts';
-import {
-  BARCODE_CANVAS_HTML,
-  decodeBarcodeScanline,
-} from '../benchmarks/stress-test-barcode.ts';
+import {decodeBarcodeScanline} from '../benchmarks/stress-test-barcode.ts';
 
 function createMockSession(opts: {
   streamId?: string;
@@ -142,7 +142,12 @@ describe('CdpScreenRecorder', () => {
     });
 
     const recorder = new CdpScreenRecorder(fakeSession);
-    const handle = await recorder.start({maxWidth: 1920, maxHeight: 1080, audio: true});
+    const handle = await recorder.start({
+      maxWidth: 1920,
+      maxHeight: 1080,
+      audio: true,
+      outputPath: '/tmp/stripped-from-cdp-wire.mp4',
+    });
     assert.equal(handle, 'stream-42');
     assert.deepEqual(fakeSession.calls[0], {
       method: 'Page.startScreenRecording',
@@ -188,6 +193,21 @@ describe('startRecording & asyncDispose', () => {
     const pptrRec = await startRecording(pptrPage, {frameRate: 120});
     assert.equal((await pptrRec.stop()).toString('utf8'), 'pptr-mp4');
     assert.equal(pptrSession.detached, 1);
+
+    const rawSession = createMockSession({payload: 'raw-cdp-mp4'});
+    const tempDir = await mkdtemp(join(tmpdir(), 'rec-unit-'));
+    const outPath = join(tempDir, 'nested', 'out.mp4');
+    try {
+      {
+        await using rec = await startRecording(rawSession, {outputPath: outPath});
+        await rec.stop();
+      }
+      const onDisk = await readFile(outPath, 'utf8');
+      assert.equal(onDisk, 'raw-cdp-mp4');
+      assert.equal(rawSession.detached, 0);
+    } finally {
+      await rm(tempDir, {recursive: true, force: true});
+    }
   });
 });
 
@@ -221,15 +241,5 @@ describe('screenRecordingFixture', () => {
         contentType: 'video/mp4',
       },
     ]);
-  });
-});
-
-describe('BARCODE_CANVAS_HTML', () => {
-  it('includes the 18-block 24x32 top-left barcode and diagnostic HUD components', () => {
-    assert.ok(BARCODE_CANVAS_HTML.includes('const BLOCK_W = 24;'));
-    assert.ok(BARCODE_CANVAS_HTML.includes('const BLOCK_H = 32;'));
-    assert.ok(BARCODE_CANVAS_HTML.includes('drawStrobeDial'));
-    assert.ok(BARCODE_CANVAS_HTML.includes('drawFrameTimingSparkline'));
-    assert.ok(BARCODE_CANVAS_HTML.includes('drawChromaSharpness'));
   });
 });

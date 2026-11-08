@@ -5,13 +5,13 @@
  */
 
 import assert from 'node:assert/strict';
-import {readFile, rm} from 'node:fs/promises';
+import {access, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {describe, it} from 'node:test';
 import {chromium} from 'playwright-core';
 import puppeteer from 'puppeteer-core';
-import {findChromeBinary, startRecording} from '../src/index.ts';
+import {connectCdpSession, findChromeBinary, launchChrome, startRecording} from '../src/index.ts';
 import {screenRecordingFixture} from '../src/playwright.ts';
 
 const HTML_CANVAS_PAGE = `<!DOCTYPE html>
@@ -41,11 +41,39 @@ const HTML_CANVAS_PAGE = `<!DOCTYPE html>
 </body>
 </html>`;
 
-async function verifyMp4(filePath: string): Promise<void> {
+async function verifyMp4(
+  filePath: string,
+  expected: {width?: number; height?: number; minFrames?: number; hasAudio?: boolean} = {},
+): Promise<void> {
   const fileBytes = await readFile(filePath);
   assert.ok(fileBytes.length > 1000, `Expected video file to be >1KB, got ${fileBytes.length} bytes`);
   assert.equal(fileBytes.subarray(4, 8).toString('ascii'), 'ftyp', 'Expected MP4 ftyp box header');
-  assert.ok(fileBytes.includes('av01'), 'Expected av01 codec box in MP4 binary');
+
+  const stsdIdx = fileBytes.indexOf('stsd');
+  assert.ok(stsdIdx !== -1, 'Expected stsd box in MP4');
+  const av01Idx = fileBytes.indexOf('av01', stsdIdx);
+  assert.ok(av01Idx !== -1, 'Expected av01 VisualSampleEntry inside stsd');
+
+  const width = fileBytes.readUInt16BE(av01Idx + 28);
+  const height = fileBytes.readUInt16BE(av01Idx + 30);
+  assert.equal(width, expected.width ?? 640, 'MP4 video width mismatch');
+  assert.equal(height, expected.height ?? 360, 'MP4 video height mismatch');
+
+  let videoFrames = 0;
+  for (let i = 0; (i = fileBytes.indexOf('tfhd', i)) !== -1; i += 4) {
+    const trackId = fileBytes.readUInt32BE(i + 8);
+    if (trackId === 1) {
+      const trunIdx = fileBytes.indexOf('trun', i);
+      assert.ok(trunIdx !== -1, 'Expected trun box after video tfhd');
+      videoFrames += fileBytes.readUInt32BE(trunIdx + 8);
+    }
+  }
+  const minFrames = expected.minFrames ?? 5;
+  assert.ok(videoFrames >= minFrames, `Expected >= ${minFrames} video frames in trun, got ${videoFrames}`);
+
+  if (expected.hasAudio) {
+    assert.ok(fileBytes.indexOf('Opus', stsdIdx) !== -1, 'Expected Opus audio track in stsd');
+  }
 }
 
 const LAUNCH_ARGS = ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader'];
@@ -130,5 +158,50 @@ describe('End-to-End Integration Tests (Real Headless Chrome M153+)', {timeout: 
       await browser.close();
       await rm(tempDir, {recursive: true, force: true});
     }
+  });
+
+  it('records 60fps video + Opus audio via launchChrome(), connectCdpSession(), and raw CDP session', async () => {
+    const outputPath = join(tmpdir(), `raw-cdp-test-${Date.now()}.mp4`);
+    const dataUrl = `data:text/html,${encodeURIComponent(HTML_CANVAS_PAGE)}`;
+    const launched = await launchChrome({
+      width: 640,
+      height: 360,
+      url: dataUrl,
+      audio: true,
+      extraArgs: LAUNCH_ARGS,
+    });
+
+    try {
+      const session = await connectCdpSession(launched.pageTargetWs);
+      try {
+        await session.send('Emulation.setDeviceMetricsOverride', {
+          width: 640,
+          height: 360,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        {
+          await using _rec = await startRecording(session, {
+            frameRate: 60,
+            maxWidth: 640,
+            maxHeight: 360,
+            audio: true,
+            outputPath,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+      } finally {
+        session.close();
+      }
+
+      await verifyMp4(outputPath, {width: 640, height: 360, minFrames: 5, hasAudio: true});
+    } finally {
+      await launched.close();
+      await rm(outputPath, {force: true});
+    }
+
+    await assert.rejects(access(launched.userDataDir), 'Expected launchChrome.close() to remove temporary userDataDir');
   });
 });
