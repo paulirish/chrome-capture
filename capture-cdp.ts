@@ -73,48 +73,6 @@ interface CdpTargetInfo {
   webSocketDebuggerUrl: string;
 }
 
-function isRecord(val: object | null): val is Record<string, object | string | number | boolean | undefined> {
-  return typeof val === 'object' && val !== null;
-}
-
-function parseCdpRpcMessage(raw: string): CdpRpcMessage | null {
-  const parsed: object | null = JSON.parse(raw);
-  if (!isRecord(parsed)) return null;
-  const id = typeof parsed.id === 'number' ? parsed.id : undefined;
-  let error: CdpRpcError | undefined;
-  if (typeof parsed.error === 'object' && parsed.error !== null && isRecord(parsed.error)) {
-    const code = typeof parsed.error.code === 'number' ? parsed.error.code : -1;
-    const message = typeof parsed.error.message === 'string' ? parsed.error.message : 'CDP error';
-    error = {code, message};
-  }
-  const result = parsed.result as CdpRpcMessage['result'];
-  return {id, result, error};
-}
-
-function parseTargetList(raw: string): CdpTargetInfo[] {
-  const parsed: object | null = JSON.parse(raw);
-  if (!Array.isArray(parsed)) return [];
-  const targets: CdpTargetInfo[] = [];
-  for (const item of parsed) {
-    if (
-      typeof item === 'object' &&
-      item !== null &&
-      typeof item.id === 'string' &&
-      typeof item.type === 'string' &&
-      typeof item.url === 'string' &&
-      typeof item.webSocketDebuggerUrl === 'string'
-    ) {
-      targets.push({
-        id: item.id,
-        type: item.type,
-        url: item.url,
-        webSocketDebuggerUrl: item.webSocketDebuggerUrl,
-      });
-    }
-  }
-  return targets;
-}
-
 export class CdpScreenRecorder {
   session: CdpSessionLike;
   streamHandle: Protocol.IO.StreamHandle | undefined;
@@ -239,7 +197,7 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
   });
 
   ws.addEventListener('message', (event) => {
-    const msg = parseCdpRpcMessage(String(event.data));
+    const msg = JSON.parse(String(event.data)) as CdpRpcMessage;
     if (!msg || typeof msg.id !== 'number') return;
     const entry = pending.get(msg.id);
     if (!entry) return;
@@ -441,7 +399,7 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
       try {
         const resp = await fetch(`${httpBase}/json/list`);
         if (resp.ok) {
-          const targets = parseTargetList(await resp.text());
+          const targets = (await resp.json()) as CdpTargetInfo[];
           const pageTarget = targets.find(t => t.type === 'page' && !t.url.startsWith('devtools://'));
           if (pageTarget) {
             pageTargetWs = pageTarget.webSocketDebuggerUrl;
@@ -486,32 +444,14 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
  */
 export function parseDuration(val: string | number | undefined, defaultMs = 3000): number {
   if (val == null) return defaultMs;
-  if (typeof val === 'number') {
-    if (Number.isNaN(val) || val <= 0) {
-      throw new Error(`Invalid duration value: ${val}`);
-    }
-    return val < 1000 ? val * 1000 : val;
-  }
   const str = String(val).trim();
   if (!str) return defaultMs;
-  if (str.endsWith('ms')) {
-    const num = parseFloat(str.slice(0, -2));
-    if (Number.isNaN(num) || num <= 0) {
-      throw new Error(`Invalid duration value: ${val}`);
-    }
-    return num;
-  }
-  if (str.endsWith('s')) {
-    const num = parseFloat(str.slice(0, -1));
-    if (Number.isNaN(num) || num <= 0) {
-      throw new Error(`Invalid duration value: ${val}`);
-    }
-    return num * 1000;
-  }
-  const num = parseFloat(str);
-  if (Number.isNaN(num) || num <= 0) {
-    throw new Error(`Invalid duration value: ${val}`);
-  }
+  const match = /^([0-9]*\.?[0-9]+)\s*(ms|s)?$/i.exec(str);
+  if (!match) throw new Error(`Invalid duration value: ${val}`);
+  const num = parseFloat(match[1]);
+  if (num <= 0) throw new Error(`Invalid duration value: ${val}`);
+  if (match[2]?.toLowerCase() === 'ms') return num;
+  if (match[2]?.toLowerCase() === 's') return num * 1000;
   return num < 1000 ? num * 1000 : num;
 }
 
@@ -615,7 +555,7 @@ Options:
         try {
           const resp = await fetch(`${launched.httpBase}/json/list`);
           if (resp.ok) {
-            const targets = parseTargetList(await resp.text());
+            const targets = (await resp.json()) as CdpTargetInfo[];
             inspectorTarget = targets.find(t => t.id === targetId);
             if (inspectorTarget) break;
           }
