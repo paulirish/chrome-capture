@@ -18,10 +18,6 @@
     "./playwright": {
       "types": "./dist/playwright.d.ts",
       "default": "./dist/playwright.js"
-    },
-    "./pptr": {
-      "types": "./dist/pptr.d.ts",
-      "default": "./dist/pptr.js"
     }
   },
   "bin": {

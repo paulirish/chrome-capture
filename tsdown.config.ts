@@ -4,7 +4,6 @@ export default defineConfig({
   entry: [
     'src/index.ts',
     'src/playwright.ts',
-    'src/pptr.ts',
     'src/cli.ts',
   ],
   format: ['esm'],

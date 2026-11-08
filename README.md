@@ -39,7 +39,7 @@ The CLI records audio by default and runs headless (`--headless=new`) for `<= 60
 ```ts
 import {startRecording} from 'chrome-capture';
 
-// `page` can be a Playwright Page, a Puppeteer Page, or a CDP session
+// `page` can be a Playwright Page, a Puppeteer Page, or a CDP session!!
 {
   await using rec = await startRecording(page, {
     outputPath: 'flow.mp4',   // optional: omit to get a Buffer from rec.stop()
