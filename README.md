@@ -1,18 +1,20 @@
 # chrome-capture
 
-Record a Chrome tab at 60-120fps (up to 4K) straight to an AV1 `.mp4`. Tab audio too, if you want it. No ffmpeg.
+Record a Chrome tab at 60-120fps (up to 4K) straight to an AV1 `.mp4`. Tab audio too. No ffmpeg.
 
 ```bash
 npx chrome-capture https://paulirish.github.io/chrome-capture/ demo.mp4 4s
 ```
 
-## Brand new Sept 2026 goodness
+## New in Chrome M153: `Page.startScreenRecording`
 
-Until recently, [`Page.startScreencast`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast) was the only way to get video frames out of CDP. That API is from ~2013, built so DevTools could show a live preview of a USB-tethered Android phone. Both Playwright (`recordVideo`) and Puppeteer (`page.screencast()`) built their video capture on top of it: Chrome JPEG-encodes each frame, base64s it into a JSON message over the CDP WebSocket, waits for an ack, and the library pipes those JPEGs into `ffmpeg`.
+For the past ~decade, [`Page.startScreencast`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast) was the only way to get video frames out of CDP. That API is from ~2013, built so DevTools could show a live preview of a USB-tethered Android phone. Both Playwright (`recordVideo`) and Puppeteer (`page.screencast()`) built their video capture on top of it: Chrome JPEG-encodes each frame, base64s it into a JSON message over the CDP WebSocket, waits for an ack, and the library pipes those JPEGs into `ffmpeg`.
 
-In Sept 2026, [`Page.startScreenRecording`](https://chromium-review.googlesource.com/c/chromium/src/+/7736461) landed in Chrome M153. Frames go straight from the compositor to an out-of-process encoder over shared memory, and Chrome writes AV1 (plus optional tab audio) into the mp4 as it goes. Stopping is basically instant because the encoding is already done (no multi-second `ffmpeg` flush on `context.close()`). And you can start/stop recording whenever you want: log in, warm up the page, then record just the interaction.
+In Sept 2026, [`Page.startScreenRecording`](https://chromium-review.googlesource.com/c/chromium/src/+/7736461) landed in Chrome M153. Frames go straight from the compositor to an out-of-process encoder over shared memory, and Chrome writes AV1 (plus optional tab audio) into the mp4 as it goes. 💅 Stopping is basically instant because the encoding is already done (no multi-second `ffmpeg` flush on `context.close()`). And you can start/stop recording whenever you want: log in, warm up the page, then record just the interaction.
 
-If you're using Puppeteer (v25+), they deprecated `page.screencast()` and added an experimental `page.record()` on top of `Page.startScreenRecording`. `page.record({frameRate: 60})` gets you most of the way there (it defaults to 30fps and doesn't expose `captureArea` yet). Playwright is still on `Page.startScreencast` (they recently landed [`maxFramesInFlight`](https://github.com/microsoft/playwright/pull/42929) and [custom fps](https://github.com/microsoft/playwright/pull/42752) for screencast, with no open issue tracking `Page.startScreenRecording` yet).
+In short: It's hot. It's good. really good.
+
+Puppeteer v25.10+ wraps this in an experimental `page.record()` (deprecating `page.screencast()`). Playwright is still on `Page.startScreencast` ([#42929](https://github.com/microsoft/playwright/pull/42929), [#42752](https://github.com/microsoft/playwright/pull/42752)), with no open issue tracking `Page.startScreenRecording` yet.
 
 ## CLI
 
