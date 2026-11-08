@@ -1,6 +1,8 @@
+dist/
 node_modules/
 recordings/
 .tmp/
 *.mp4
 *.webm
 .DS_Store
+

@@ -3,25 +3,42 @@
   "version": "0.1.0",
   "description": "Zero-dependency 60-120fps / 4K tab video + audio capture from Chromium (M153+) via CDP Page.startScreenRecording",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
-    ".": "./src/index.ts",
-    "./playwright": "./src/playwright.ts",
-    "./pptr": "./src/pptr.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./playwright": {
+      "types": "./dist/playwright.d.ts",
+      "default": "./dist/playwright.js"
+    },
+    "./pptr": {
+      "types": "./dist/pptr.d.ts",
+      "default": "./dist/pptr.js"
+    }
   },
   "bin": {
-    "chrome-capture-60fps": "./src/cli.ts"
+    "chrome-capture-60fps": "./dist/cli.js"
   },
   "engines": {
     "node": ">=24.11.0"
   },
   "scripts": {
+    "build": "tsdown",
+    "prepack": "pnpm run build",
     "start": "node src/cli.ts",
     "test": "pnpm run typecheck && pnpm run test:node",
     "test:node": "node --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
-    "preflight": "pnpm typecheck && pnpm lint && pnpm test"
+    "preflight": "pnpm typecheck && pnpm lint && pnpm build && pnpm test"
   },
   "keywords": [
     "cdp",
@@ -43,6 +60,7 @@
     "oxlint": "1.92.0",
     "playwright-core": "1.65.0",
     "puppeteer-core": "25.16.0",
+    "tsdown": "^0.23.7",
     "typescript": "7.0.2"
   }
 }
