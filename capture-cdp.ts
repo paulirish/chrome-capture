@@ -49,7 +49,6 @@ export interface LaunchChromeOptions {
 export interface LaunchedChrome {
   proc: ChildProcess;
   browserWsUrl: string;
-  httpBase: string;
   pageTargetWs: string;
   userDataDir: string;
   close: () => Promise<void>;
@@ -64,13 +63,6 @@ interface CdpRpcMessage {
   id?: number;
   result?: ProtocolMapping.Commands[keyof ProtocolMapping.Commands]['returnType'];
   error?: CdpRpcError;
-}
-
-interface CdpTargetInfo {
-  id: string;
-  type: string;
-  url: string;
-  webSocketDebuggerUrl: string;
 }
 
 export class CdpScreenRecorder {
@@ -390,36 +382,30 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
       proc.once('exit', code => reject(new Error(`Chrome exited early (${code})`)));
     });
 
-    const httpBase = browserWsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*/, '');
-
-    // Poll /json/list until a non-devtools page target is ready (up to 5s)
+    const browserSession = await connectCdpSession(browserWsUrl);
     let pageTargetWs: string | undefined;
-    const deadline = performance.now() + 5000;
-    while (performance.now() < deadline) {
-      try {
-        const resp = await fetch(`${httpBase}/json/list`);
-        if (resp.ok) {
-          const targets = (await resp.json()) as CdpTargetInfo[];
-          const pageTarget = targets.find(t => t.type === 'page' && !t.url.startsWith('devtools://'));
-          if (pageTarget) {
-            pageTargetWs = pageTarget.webSocketDebuggerUrl;
-            break;
-          }
+    try {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const {targetInfos} = await browserSession.send('Target.getTargets');
+        const pageTarget = targetInfos.find(t => t.type === 'page' && !t.url.startsWith('devtools://'));
+        if (pageTarget) {
+          pageTargetWs = new URL(`/devtools/page/${pageTarget.targetId}`, browserWsUrl).toString();
+          break;
         }
-      } catch {
-        // Retry
+        await new Promise(r => setTimeout(r, 50));
       }
-      await new Promise(r => setTimeout(r, 50));
+    } finally {
+      browserSession.close();
     }
 
     if (!pageTargetWs) {
-      throw new Error(`Timed out waiting for Chrome page target at ${httpBase}/json/list`);
+      throw new Error('Timed out waiting for Chrome page target');
     }
 
     return {
       proc,
       browserWsUrl,
-      httpBase,
       pageTargetWs,
       userDataDir,
       close: async () => {
@@ -548,25 +534,7 @@ Options:
       const browserSession = await connectCdpSession(launched.browserWsUrl);
       const {targetId} = await browserSession.send('Target.createTarget', {url: inspectorUrl});
       browserSession.close();
-
-      const deadline = performance.now() + 5000;
-      let inspectorTarget: CdpTargetInfo | undefined;
-      while (performance.now() < deadline) {
-        try {
-          const resp = await fetch(`${launched.httpBase}/json/list`);
-          if (resp.ok) {
-            const targets = (await resp.json()) as CdpTargetInfo[];
-            inspectorTarget = targets.find(t => t.id === targetId);
-            if (inspectorTarget) break;
-          }
-        } catch {
-          // Retry
-        }
-        await new Promise(r => setTimeout(r, 50));
-      }
-
-      if (!inspectorTarget) throw new Error('Failed to find inspector.html target.');
-      recordTargetWs = inspectorTarget.webSocketDebuggerUrl;
+      recordTargetWs = new URL(`/devtools/page/${targetId}`, launched.browserWsUrl).toString();
     }
 
     const session = await connectCdpSession(recordTargetWs);

@@ -186,22 +186,23 @@ export function decodeBarcodes(videoPath: string): BarcodeMetrics {
   }
   const sizeKb = fileSizeBytes / 1024.0;
 
-  const barcodes: number[] = [];
+  const barcodes = new Set<number>();
+  let dups = 0;
+  let lastBarcode = -1;
+  let validFrames = 0;
+
   for (let i = 0; i < nFrames; i++) {
     const fbuf = raw.subarray(i * stride, (i + 1) * stride);
     const rowOffset = 4 * cropW;
     const row = fbuf.subarray(rowOffset, rowOffset + cropW);
     const val = decodeBarcodeScanline(row, 24);
     if (val !== null) {
-      barcodes.push(val);
-    }
-  }
-
-  const unique = new Set(barcodes).size;
-  let dups = 0;
-  for (let i = 1; i < barcodes.length; i++) {
-    if (barcodes[i] === barcodes[i - 1]) {
-      dups++;
+      barcodes.add(val);
+      if (val === lastBarcode) {
+        dups++;
+      }
+      lastBarcode = val;
+      validFrames++;
     }
   }
 
@@ -209,9 +210,9 @@ export function decodeBarcodes(videoPath: string): BarcodeMetrics {
     duration_sec: Math.round(dur * 100) / 100,
     container_frames: nFrames,
     container_fps: dur > 0 ? Math.round((nFrames / dur) * 10) / 10 : 0.0,
-    unique_frames: unique,
-    unique_visual_fps: dur > 0 ? Math.round((unique / dur) * 10) / 10 : 0.0,
-    duplicate_pct: barcodes.length > 0 ? Math.round((100.0 * dups / barcodes.length) * 10) / 10 : 0.0,
+    unique_frames: barcodes.size,
+    unique_visual_fps: dur > 0 ? Math.round((barcodes.size / dur) * 10) / 10 : 0.0,
+    duplicate_pct: validFrames > 0 ? Math.round((100.0 * dups / validFrames) * 10) / 10 : 0.0,
     size_kb: Math.round(sizeKb * 10) / 10,
   };
 }
@@ -238,18 +239,8 @@ export async function runCase(
   const outMp4 = savePath || join(launched.userDataDir, 'out.mp4');
 
   try {
-    let browserVer = 'unknown';
-    try {
-      const resp = await fetch(`${launched.httpBase}/json/version`);
-      const info = await resp.json() as {Browser?: string};
-      if (info && typeof info.Browser === 'string') {
-        browserVer = info.Browser;
-      }
-    } catch {
-      // Continue with unknown version.
-    }
-
     const pageSession = await connectCdpSession(launched.pageTargetWs);
+    const {product: browserVer} = await pageSession.send('Browser.getVersion').catch(() => ({product: 'unknown'}));
 
     await pageSession.send('Page.enable');
     await pageSession.send('Runtime.enable');
