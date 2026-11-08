@@ -9,7 +9,7 @@
  * native CDP `Page.startScreenRecording`.
  *
  * Usage:
- *   import {startRecording} from 'chrome-capture-60fps/pptr';
+ *   import {startRecording} from 'chrome-capture/pptr';
  *   const recording = await startRecording(page, {frameRate: 60, audio: true});
  *   await page.goto('https://example.com');
  *   const mp4 = await recording.stop('out.mp4');

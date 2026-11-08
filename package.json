@@ -1,5 +1,5 @@
 {
-  "name": "chrome-capture-60fps",
+  "name": "chrome-capture",
   "version": "0.1.0",
   "description": "Zero-dependency 60-120fps / 4K tab video + audio capture from Chromium (M153+) via CDP Page.startScreenRecording",
   "type": "module",
@@ -25,7 +25,7 @@
     }
   },
   "bin": {
-    "chrome-capture-60fps": "./dist/cli.js"
+    "chrome-capture": "./dist/cli.js"
   },
   "engines": {
     "node": ">=24.11.0"
@@ -54,10 +54,10 @@
   ],
   "author": "Paul Irish",
   "license": "Apache-2.0",
-  "homepage": "https://paulirish.github.io/chrome-capture-60fps/",
+  "homepage": "https://paulirish.github.io/chrome-capture/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/paulirish/chrome-capture-60fps.git"
+    "url": "https://github.com/paulirish/chrome-capture.git"
   },
   "devDependencies": {
     "@types/node": "26.6.6",

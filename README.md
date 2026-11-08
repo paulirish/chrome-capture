@@ -1,9 +1,9 @@
-# chrome-capture-60fps
+# chrome-capture
 
 Record a Chrome tab at 60fps (up to 120fps, up to 4K) straight to an AV1 `.mp4`. Tab audio too, if you want it. No ffmpeg.
 
 ```bash
-npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ demo.mp4 4s
+npx chrome-capture https://paulirish.github.io/chrome-capture/ demo.mp4 4s
 ```
 
 ## Brand new Sept 2026 goodness
@@ -18,16 +18,16 @@ If you're using Puppeteer (v25+), they deprecated `page.screencast()` and added 
 
 ```bash
 # 720p @ 60fps for 4s, with tab audio
-npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ demo.mp4 4s
+npx chrome-capture https://paulirish.github.io/chrome-capture/ demo.mp4 4s
 
 # 4K @ 60fps, no audio
-npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 4k.mp4 5s --width=3840 --height=2160 --no-audio
+npx chrome-capture https://paulirish.github.io/chrome-capture/ 4k.mp4 5s --width=3840 --height=2160 --no-audio
 
 # 1080p @ 120fps (needs a 120Hz display and headful Chrome, e.g. a ProMotion MacBook)
-npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 120fps.mp4 5s --fps=120 --width=1920 --height=1080 --headful
+npx chrome-capture https://paulirish.github.io/chrome-capture/ 120fps.mp4 5s --fps=120 --width=1920 --height=1080 --headful
 
 # Record the page with DevTools open next to it
-npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ devtools.mp4 5s --with-devtools
+npx chrome-capture https://paulirish.github.io/chrome-capture/ devtools.mp4 5s --with-devtools
 ```
 
 The CLI records audio by default and runs headless (`--headless=new`) for `<= 60fps`, automatically switching to `--headful` on macOS when `--fps > 60` so Chrome can lock onto ProMotion's 120Hz `CVDisplayLink`. `--help` for the rest.
@@ -37,7 +37,7 @@ The CLI records audio by default and runs headless (`--headless=new`) for `<= 60
 `startRecording()` takes a Playwright `Page`, a Puppeteer `Page`, or a CDP session. It defaults to 60fps and works with `await using`, so the mp4 is written when the block exits:
 
 ```ts
-import {startRecording} from 'chrome-capture-60fps';
+import {startRecording} from 'chrome-capture';
 
 {
   await using rec = await startRecording(page, {
@@ -48,7 +48,7 @@ import {startRecording} from 'chrome-capture-60fps';
     captureArea: 'target',    // 'target' (viewport) or 'browserWindow'
     audio: false,             // 48kHz stereo Opus tab audio
   });
-  await page.goto('https://paulirish.github.io/chrome-capture-60fps/');
+  await page.goto('https://paulirish.github.io/chrome-capture/');
   await page.click('a');
 }
 ```
@@ -59,7 +59,7 @@ Records every test and attaches the mp4 to the report:
 
 ```ts
 import {test as base} from '@playwright/test';
-import {screenRecordingFixture} from 'chrome-capture-60fps/playwright';
+import {screenRecordingFixture} from 'chrome-capture/playwright';
 
 export const test = base.extend({
   recordVideo60fps: screenRecordingFixture({auto: true, audio: true}),
@@ -71,7 +71,7 @@ export const test = base.extend({
 ### Raw CDP
 
 ```ts
-import {CdpScreenRecorder, connectCdpSession} from 'chrome-capture-60fps';
+import {CdpScreenRecorder, connectCdpSession} from 'chrome-capture';
 
 const session = await connectCdpSession(pageWebSocketDebuggerUrl);
 const recorder = new CdpScreenRecorder(session);
@@ -86,7 +86,7 @@ session.close();
 
 Same 6.4s UI replay (typing, clicks, drag-and-drop, scroll) at 1280x800, recorded both ways on an M4 Max. Methodology and the full numbers are in [benchmarks/README.md](./benchmarks/README.md).
 
-| | Playwright `recordVideo` | chrome-capture-60fps |
+| | Playwright `recordVideo` | chrome-capture |
 | :--- | ---: | ---: |
 | Output fps | 25 | 60 |
 | Total wall-clock | 21.2s | 11.6s |
@@ -100,7 +100,7 @@ So.. 2.4x the frames, in a smaller file, at better quality, and the run finishes
 
 ### How high can it go?
 
-Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test ([demo](https://paulirish.github.io/chrome-capture-60fps/)) draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames.
+Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test ([demo](https://paulirish.github.io/chrome-capture/)) draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames.
 
 On a 120Hz ProMotion display:
 * `4K @ 60fps`: 60 unique frames/sec (both `--headless` and `--headful`)

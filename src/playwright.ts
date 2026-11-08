@@ -9,14 +9,14 @@
  * native CDP `Page.startScreenRecording`.
  *
  * Usage with Playwright Library:
- *   import {startRecording} from 'chrome-capture-60fps/playwright';
+ *   import {startRecording} from 'chrome-capture/playwright';
  *   const recording = await startRecording(page, {frameRate: 60, audio: true});
  *   await page.goto('https://example.com');
  *   const mp4 = await recording.stop('out.mp4');
  *
  * Usage with @playwright/test:
  *   import {test as base} from '@playwright/test';
- *   import {screenRecordingFixture} from 'chrome-capture-60fps/playwright';
+ *   import {screenRecordingFixture} from 'chrome-capture/playwright';
  *
  *   export const test = base.extend({
  *     recordVideo60fps: screenRecordingFixture({auto: true, frameRate: 60}),
