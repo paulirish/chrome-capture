@@ -11,6 +11,9 @@ export default defineConfig({
   dts: true,
   clean: true,
   fixedExtension: false,
-  external: ['puppeteer-core', 'playwright-core'],
+  deps: {
+    neverBundle: ['puppeteer-core', 'playwright-core'],
+    onlyBundle: ['devtools-protocol'],
+  },
 });
 
