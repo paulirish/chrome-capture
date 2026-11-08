@@ -45,7 +45,7 @@ Options:
   --capture-area=<area>       'target' (tab viewport) or 'browserWindow' (default: target)
   --audio                     Enable audio track recording (default)
   --no-audio                  Disable audio track recording
-  --headed                    Run in headed mode (default on macOS)
+  --headfull                  Run in headfull mode (default on macOS)
   --headless                  Run in --headless=new mode (default on Linux)
   --with-devtools             Open screencast + DevTools side-by-side in inspector.html
   --chrome=<path>             Path to Google Chrome executable
@@ -66,7 +66,7 @@ Options:
       'capture-area': {type: 'string'},
       audio: {type: 'boolean'},
       'no-audio': {type: 'boolean'},
-      headed: {type: 'boolean'},
+      headfull: {type: 'boolean'},
       headless: {type: 'boolean'},
       'with-devtools': {type: 'boolean'},
       chrome: {type: 'string'},
@@ -90,7 +90,7 @@ Options:
   const captureArea: Protocol.Page.StartScreenRecordingRequest['captureArea'] =
     rawArea === 'browserWindow' ? 'browserWindow' : 'target';
   const audio = parsed.values.audio ? true : !parsed.values['no-audio'];
-  const headless = parsed.values.headless || (!parsed.values.headed && platform() !== 'darwin');
+  const headless = parsed.values.headless || (!parsed.values.headfull && platform() !== 'darwin');
   const withDevTools = Boolean(parsed.values['with-devtools']);
   const explicitChrome = parsed.values.chrome;
 
