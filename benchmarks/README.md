@@ -1,6 +1,6 @@
 # CDP `Page.startScreenRecording` vs. Playwright Screen Capture: Scaling & Benchmarks
 
-Chromium M153+ added native out-of-band tab video recording via CDP [`Page.startScreenRecording`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreenRecording) and [`Page.stopScreenRecording`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-stopScreenRecording) ([Chromium `page_handler.cc`](https://source.chromium.org/chromium/chromium/src/+/main:content/browser/devtools/protocol/page_handler.cc)).
+Chromium M153+ added native out-of-band tab video recording via CDP [`Page.startScreenRecording`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreenRecording) ([crrev.com/c/7736461](https://chromium-review.googlesource.com/c/chromium/src/+/7736461), [Chromium `page_handler.cc`](https://source.chromium.org/chromium/chromium/src/+/main:content/browser/devtools/protocol/page_handler.cc)).
 
 This document captures how `Page.startScreenRecording` scales up to **1080p @ 120fps** and **4K (`3840x2160`) @ 60fps**, why it outperforms Playwright's `record_video_dir` (`Page.startScreencast` + `ffmpeg` pipe), and why `--disable-frame-rate-limit --disable-gpu-vsync` must not be used on hardware-accelerated macOS.
 
