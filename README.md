@@ -2,23 +2,17 @@
 
 Record a Chrome tab at 60fps (up to 120fps, up to 4K) straight to an AV1 `.mp4`. Tab audio too, if you want it. No ffmpeg.
 
-It's a thin wrapper around [`Page.startScreenRecording`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreenRecording), a CDP method that landed in Chrome M153. Chrome does the encoding itself and hands you back an mp4.
-
 ```bash
 npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ demo.mp4 4s
 ```
 
 ## Brand new Sept 2026 goodness
 
-Until recently, [`Page.startScreencast`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast) was the only way to get video frames out of CDP. That API is from ~2013, built so DevTools could show a live preview of a USB-tethered Android phone. Both Playwright (`recordVideo`) and Puppeteer (`page.screencast()`) built their video recording on top of it: Chrome JPEG-encodes each frame, base64s it into a JSON message over the CDP WebSocket, waits for an ack, and the library pipes those JPEGs into `ffmpeg`.
+Until recently, [`Page.startScreencast`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast) was the only way to get video frames out of CDP. That API is from ~2013, built so DevTools could show a live preview of a USB-tethered Android phone. Both Playwright (`recordVideo`) and Puppeteer (`page.screencast()`) built their video capture on top of it: Chrome JPEG-encodes each frame, base64s it into a JSON message over the CDP WebSocket, waits for an ack, and the library pipes those JPEGs into `ffmpeg`.
 
-In Sept 2026, [`Page.startScreenRecording`](https://chromium-review.googlesource.com/c/chromium/src/+/7736461) landed in Chrome M153. Frames go straight from the compositor to an out-of-process encoder over shared memory, and Chrome writes AV1 (plus optional tab audio) into the mp4 as it goes. Stopping is basically instant because the encoding is already done — no multi-second `ffmpeg` flush on `context.close()`. (Full pipeline comparison in [benchmarks/README.md](./benchmarks/README.md).)
+In Sept 2026, [`Page.startScreenRecording`](https://chromium-review.googlesource.com/c/chromium/src/+/7736461) landed in Chrome M153. Frames go straight from the compositor to an out-of-process encoder over shared memory, and Chrome writes AV1 (plus optional tab audio) into the mp4 as it goes. Stopping is basically instant because the encoding is already done (no multi-second `ffmpeg` flush on `context.close()`). And you can start/stop recording whenever you want: log in, warm up the page, then record just the interaction.
 
-You can also start and stop recording whenever you want: log in, warm up the page, then record just the interaction.
-
-**Ecosystem status:**
-- **Puppeteer** 25 deprecated `page.screencast()` and added an experimental `page.record()` on top of `Page.startScreenRecording`. If you're Puppeteer-only, `page.record({frameRate: 60})` gets you most of the way (it defaults to 30fps and doesn't expose `captureArea` yet).
-- **Playwright** is still on `Page.startScreencast` (they recently landed [`maxFramesInFlight`](https://github.com/microsoft/playwright/pull/42929) and [custom fps](https://github.com/microsoft/playwright/pull/42752) for screencast, with no open issue tracking `Page.startScreenRecording` yet).
+If you're using Puppeteer (v25+), they deprecated `page.screencast()` and added an experimental `page.record()` on top of `Page.startScreenRecording`. `page.record({frameRate: 60})` gets you most of the way there (it defaults to 30fps and doesn't expose `captureArea` yet). Playwright is still on `Page.startScreencast` (they recently landed [`maxFramesInFlight`](https://github.com/microsoft/playwright/pull/42929) and [custom fps](https://github.com/microsoft/playwright/pull/42752) for screencast, with no open issue tracking `Page.startScreenRecording` yet).
 
 ## CLI
 
@@ -36,7 +30,7 @@ npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 120fp
 npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ devtools.mp4 5s --with-devtools
 ```
 
-The CLI records audio by default and runs headless (`--headless=new`) for `<= 60fps` (including 4K@60 on macOS Metal), automatically switching to `--headful` on macOS when `--fps > 60` so Chrome can lock onto ProMotion's 120Hz `CVDisplayLink`. `--help` for the rest.
+The CLI records audio by default and runs headless (`--headless=new`) for `<= 60fps`, automatically switching to `--headful` on macOS when `--fps > 60` so Chrome can lock onto ProMotion's 120Hz `CVDisplayLink`. `--help` for the rest.
 
 ## Playwright, Puppeteer, or raw CDP
 
@@ -46,15 +40,18 @@ The CLI records audio by default and runs headless (`--headless=new`) for `<= 60
 import {startRecording} from 'chrome-capture-60fps';
 
 {
-  await using rec = await startRecording(page, {outputPath: 'flow.mp4'});
+  await using rec = await startRecording(page, {
+    outputPath: 'flow.mp4',   // optional: omit to get a Buffer from rec.stop()
+    frameRate: 60,            // default: 60 (up to 120 on a 120Hz display)
+    maxWidth: 1280,           // default: 1280
+    maxHeight: 720,           // default: 720
+    captureArea: 'target',    // 'target' (viewport) or 'browserWindow'
+    audio: false,             // 48kHz stereo Opus tab audio
+  });
   await page.goto('https://paulirish.github.io/chrome-capture-60fps/');
   await page.click('a');
 }
 ```
-
-Want the bytes instead? `await rec.stop()` returns a `Buffer`.
-
-Everything else passes straight through to the CDP method: `frameRate`, `maxWidth`, `maxHeight`, `captureArea`, and `audio` (48kHz stereo Opus, off by default here).
 
 ### `@playwright/test` fixture
 
@@ -69,7 +66,7 @@ export const test = base.extend({
 });
 ```
 
-Drop `auto: true` if you'd rather call `recordVideo60fps.start()` yourself, mid-test.
+(Drop `auto: true` if you'd rather call `recordVideo60fps.start()` yourself, mid-test.)
 
 ### Raw CDP
 
@@ -101,11 +98,12 @@ Same 6.4s UI replay (typing, clicks, drag-and-drop, scroll) at 1280x800, recorde
 
 So.. 2.4x the frames, in a smaller file, at better quality, and the run finishes ~10s sooner. At 4K the gap is sillier: Playwright's stop takes 20.5s, this takes 91ms.
 
-How high can it go? Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames. On a 120Hz ProMotion display:
+### How high can it go?
 
-- 1080p @ 120fps: 120 unique frames/sec (requires `--headful`; `--headless=new` on macOS still gets full Metal GPU acceleration for 4K@60, but ticks `rAF` from a 60Hz timer instead of the 120Hz `CVDisplayLink`)
-- 4K @ 60fps: 60 unique frames/sec (both `--headless` and `--headful`)
+Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test ([demo](https://paulirish.github.io/chrome-capture-60fps/)) draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames.
 
-## Don't uncap vsync on macOS
+On a 120Hz ProMotion display:
+* `4K @ 60fps`: 60 unique frames/sec (both `--headless` and `--headful`)
+* `1080p @ 120fps`: 120 unique frames/sec with `--headful`. (`--headless=new` on macOS still gets full Metal GPU acceleration for 4K@60, but ticks `rAF` from a 60Hz timer instead of the 120Hz `CVDisplayLink`.)
 
-It's tempting, but don't pass `--disable-frame-rate-limit --disable-gpu-vsync` on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the GPU command queue, and starves the capture readback. 4K@60 drops to 0.3fps. Leave native vsync alone; it's what gets you to 120.
+One macOS gotcha: it's tempting to pass `--disable-frame-rate-limit --disable-gpu-vsync`, but don't do it on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the GPU command queue, and starves the capture readback (dropping 4K@60 to 0.3fps). Leave native vsync alone; it's what gets you to 120.
