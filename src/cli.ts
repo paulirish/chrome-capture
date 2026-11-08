@@ -67,6 +67,7 @@ Options:
       audio: {type: 'boolean'},
       'no-audio': {type: 'boolean'},
       headful: {type: 'boolean'},
+      headed: {type: 'boolean'},
       headless: {type: 'boolean'},
       'with-devtools': {type: 'boolean'},
       chrome: {type: 'string'},
@@ -90,7 +91,8 @@ Options:
   const captureArea: Protocol.Page.StartScreenRecordingRequest['captureArea'] =
     rawArea === 'browserWindow' ? 'browserWindow' : 'target';
   const audio = parsed.values.audio ? true : !parsed.values['no-audio'];
-  const headless = parsed.values.headless || (!parsed.values.headful && platform() !== 'darwin');
+  const headful = Boolean(parsed.values.headful || parsed.values.headed);
+  const headless = parsed.values.headless || (!headful && platform() !== 'darwin');
   const withDevTools = Boolean(parsed.values['with-devtools']);
   const explicitChrome = parsed.values.chrome;
 
