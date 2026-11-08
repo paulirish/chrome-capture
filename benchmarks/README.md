@@ -83,6 +83,25 @@ On a MacBook Pro with ProMotion (`120Hz` native `CVDisplayLink`) and hardware Me
 * That tight submission loop floods the Viz GPU compositor command queue and starves `FrameSinkVideoCapturerImpl`'s `CopyOutputRequest` readback pipeline—collapsing 4K@60 capture to **`0.3 fps` (`1` unique frame)** and 1080p@90 capture to **`11.7 fps`**.
 * With **Native ProMotion VSync (`CVDisplayLink`)**, macOS paces `BeginFrame` cleanly at `120Hz`, allowing Metal GPU compositing and out-of-process AV1 encoding to hit **`60.2 true unique visual FPS` at 4K**, **`89.4 FPS` at 1080p@90**, and **`120.2 FPS` at 1080p@120** with `< 91 ms` finalization.
 
+### Headless (`--headless=new`) vs. Headful on macOS Apple Silicon (M4 Max)
+
+Running the same 9-case matrix with `node benchmarks/stress-test-barcode.ts --headless` on the M4 Max confirms how `--headless=new` behaves on macOS:
+
+| Test Case (macOS M4 Max `--headless=new`) | Target FPS | In-Page `rAF` FPS | Container FPS | **True Unique Visual FPS** | Duplicate Frames | Finalize Latency | Size (4s MP4) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`1080p @ 60fps` (Native VSync)** | `60` | `57.7` | `60.0` | **`59.7 fps`** (`231/232`) | `0.4%` | `115.0 ms` | `3,501.9 KB` |
+| `1080p @ 90fps` (Native VSync) | `90` | `60.0` | `60.6` | **`60.4 fps`** (`240/241`) | `0.4%` | `118.2 ms` | `3,689.2 KB` |
+| `1080p @ 90fps` (Uncapped VSync) | `90` | `4003.9` | `26.9` | `26.6 fps` (`103/104`) | `1.0%` | `54.3 ms` | `1,610.4 KB` |
+| `1080p @ 120fps` (Native VSync) | `120` | `60.0` | `60.6` | **`60.4 fps`** (`240/241`) | `0.4%` | `131.3 ms` | `3,668.4 KB` |
+| `1080p @ 120fps` (Uncapped VSync) | `120` | `3980.4` | `30.6` | `30.3 fps` (`118/119`) | `0.8%` | `65.3 ms` | `1,843.2 KB` |
+| **`1440p @ 60fps` (Native VSync)** | `60` | `60.0` | `60.3` | **`60.0 fps`** (`240/241`) | `0.4%` | `203.3 ms` | `6,162.0 KB` |
+| **`4K (3840x2160) @ 30fps` (Native VSync)** | `30` | `60.0` | `30.3` | **`30.1 fps`** (`121/122`) | `0.8%` | `180.7 ms` | `6,235.1 KB` |
+| **`4K (3840x2160) @ 60fps` (Native VSync)** | `60` | `60.0` | `60.6` | **`60.3 fps`** (`240/241`) | `0.4%` | `418.7 ms` | `12,609.5 KB` |
+| `4K (3840x2160) @ 60fps` (Uncapped VSync) | `60` | `2548.3` | `14.9` | `14.4 fps` (`57/59`) | `1.7%` | `133.0 ms` | `2,997.6 KB` |
+
+* **Metal GPU acceleration remains active in `--headless=new` on macOS**: `1080p@60`, `1440p@60`, and **`4K (3840x2160) @ 60fps`** all sustain **`60.0–60.3` true unique visual fps** with `0.4%` duplicates in `--headless=new` (without opening a visible browser window).
+* **`--headless=new` caps `BeginFrame` (`rAF`) at `60Hz`**: Without an on-screen `NSWindow` bound to the display's `120Hz` ProMotion `CVDisplayLink`, headless Chromium drives `BeginFrame` from a synthetic `60Hz` timer (`In-Page rAF FPS = 60.0`), capping `90fps` and `120fps` captures at `60.4` unique visual fps. Use `--headful` when recording at `> 60fps` (`90fps` / `120fps`).
+
 ---
 
 ## 5. Scaling Results: Headless Linux Without Hardware GPU (`--headless=new --disable-gpu`)

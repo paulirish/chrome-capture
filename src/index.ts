@@ -318,7 +318,7 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
 
   const width = options.width ?? 1280;
   const height = options.height ?? 720;
-  const headless = options.headless ?? (platform() !== 'darwin');
+  const headless = options.headless ?? true;
 
   const chromeArgs = [
     '--no-first-run',
@@ -357,11 +357,28 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
   const cleanup = async () => {
     if (cleanedUp) return;
     cleanedUp = true;
-    try {
-      proc.kill('SIGKILL');
-    } catch {
-      // Ignore
+    proc.stderr?.destroy();
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const exitPromise = new Promise<void>(resolve => {
+        proc.once('exit', () => resolve());
+      });
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // Ignore
+      }
+      const killTimer = setTimeout(() => {
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          // Ignore
+        }
+      }, 500);
+      killTimer.unref();
+      await exitPromise;
+      clearTimeout(killTimer);
     }
+    proc.unref();
     try {
       await rm(userDataDir, {recursive: true, force: true});
     } catch {
@@ -382,17 +399,31 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
   try {
     const browserWsUrl = await new Promise<string>((resolve, reject) => {
       let stderrAcc = '';
+      const cleanupListeners = () => {
+        proc.stderr?.off('data', onData);
+        proc.off('error', onError);
+        proc.off('exit', onExit);
+      };
       const onData = (chunk: Buffer) => {
         stderrAcc += chunk.toString();
         const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(stderrAcc);
         if (match) {
-          proc.stderr?.off('data', onData);
+          cleanupListeners();
+          proc.stderr?.destroy();
           resolve(match[1]);
         }
       };
+      const onError = (err: Error) => {
+        cleanupListeners();
+        reject(err);
+      };
+      const onExit = (code: number | null) => {
+        cleanupListeners();
+        reject(new Error(`Chrome exited early (${code})`));
+      };
       proc.stderr?.on('data', onData);
-      proc.once('error', reject);
-      proc.once('exit', code => reject(new Error(`Chrome exited early (${code})`)));
+      proc.once('error', onError);
+      proc.once('exit', onExit);
     });
 
     const browserSession = await connectCdpSession(browserWsUrl);

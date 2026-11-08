@@ -45,8 +45,8 @@ Options:
   --capture-area=<area>       'target' (tab viewport) or 'browserWindow' (default: target)
   --audio                     Enable audio track recording (default)
   --no-audio                  Disable audio track recording
-  --headful                   Run in headful mode (default on macOS)
-  --headless                  Run in --headless=new mode (default on Linux)
+  --headful                   Run in headful mode (auto-enabled on macOS when --fps > 60)
+  --headless                  Run in --headless=new mode (default for <= 60fps)
   --with-devtools             Open screencast + DevTools side-by-side in inspector.html
   --chrome=<path>             Path to Google Chrome executable
   -h, --help                  Show this help message
@@ -92,7 +92,7 @@ Options:
     rawArea === 'browserWindow' ? 'browserWindow' : 'target';
   const audio = parsed.values.audio ? true : !parsed.values['no-audio'];
   const headful = Boolean(parsed.values.headful || parsed.values.headed);
-  const headless = parsed.values.headless || (!headful && platform() !== 'darwin');
+  const headless = parsed.values.headless || (!headful && !(platform() === 'darwin' && frameRate > 60));
   const withDevTools = Boolean(parsed.values['with-devtools']);
   const explicitChrome = parsed.values.chrome;
 

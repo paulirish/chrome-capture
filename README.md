@@ -36,7 +36,7 @@ npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 120fp
 npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ devtools.mp4 5s --with-devtools
 ```
 
-The CLI records audio by default and runs headless on Linux, headful on macOS. `--help` for the rest.
+The CLI records audio by default and runs headless (`--headless=new`) for `<= 60fps` (including 4K@60 on macOS Metal), automatically switching to `--headful` on macOS when `--fps > 60` so Chrome can lock onto ProMotion's 120Hz `CVDisplayLink`. `--help` for the rest.
 
 ## Playwright, Puppeteer, or raw CDP
 
@@ -103,8 +103,8 @@ So.. 2.4x the frames, in a smaller file, at better quality, and the run finishes
 
 How high can it go? Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames. On a 120Hz ProMotion display:
 
-- 1080p @ 120fps: 120 unique frames/sec
-- 4K @ 60fps: 60 unique frames/sec
+- 1080p @ 120fps: 120 unique frames/sec (requires `--headful`; `--headless=new` on macOS still gets full Metal GPU acceleration for 4K@60, but ticks `rAF` from a 60Hz timer instead of the 120Hz `CVDisplayLink`)
+- 4K @ 60fps: 60 unique frames/sec (both `--headless` and `--headful`)
 
 ## Don't uncap vsync on macOS
 
