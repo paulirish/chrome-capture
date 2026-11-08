@@ -1,0 +1,34 @@
+{
+  "name": "chrome-capture-60fps",
+  "version": "0.1.0",
+  "description": "Zero-dependency 60-120fps / 4K tab video + audio capture from Chromium (M153+) via CDP Page.startScreenRecording",
+  "type": "module",
+  "main": "./capture-cdp.js",
+  "exports": {
+    ".": "./capture-cdp.js"
+  },
+  "bin": {
+    "chrome-capture-60fps": "./capture-cdp.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node capture-cdp.js",
+    "test": "node --test test/**/*.test.js"
+  },
+  "keywords": [
+    "cdp",
+    "chrome",
+    "chromium",
+    "screen-recording",
+    "video-capture",
+    "playwright",
+    "puppeteer",
+    "60fps",
+    "120fps",
+    "av1"
+  ],
+  "author": "Paul Irish",
+  "license": "Apache-2.0"
+}
