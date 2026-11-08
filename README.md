@@ -29,14 +29,14 @@ npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ demo.
 # 4K @ 60fps, no audio
 npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 4k.mp4 5s --width=3840 --height=2160 --no-audio
 
-# 1080p @ 120fps (needs a 120Hz display and headfull Chrome, e.g. a ProMotion MacBook)
-npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 120fps.mp4 5s --fps=120 --width=1920 --height=1080 --headfull
+# 1080p @ 120fps (needs a 120Hz display and headful Chrome, e.g. a ProMotion MacBook)
+npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ 120fps.mp4 5s --fps=120 --width=1920 --height=1080 --headful
 
 # Record the page with DevTools open next to it
 npx chrome-capture-60fps https://paulirish.github.io/chrome-capture-60fps/ devtools.mp4 5s --with-devtools
 ```
 
-The CLI records audio by default and runs headless on Linux, headfull on macOS. `--help` for the rest.
+The CLI records audio by default and runs headless on Linux, headful on macOS. `--help` for the rest.
 
 ## Playwright, Puppeteer, or raw CDP
 
