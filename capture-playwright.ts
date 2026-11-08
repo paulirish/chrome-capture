@@ -25,7 +25,7 @@
 import {writeFile} from 'node:fs/promises';
 import {platform} from 'node:os';
 import {fileURLToPath} from 'node:url';
-import {chromium, type Page} from 'playwright-core';
+import type {Page} from 'playwright-core';
 import {
   CdpScreenRecorder,
   type CdpSessionLike,
@@ -36,7 +36,7 @@ import {
 
 export interface PlaywrightPageLike {
   context(): {
-    newCDPSession(page: never): Promise<CdpSessionLike & {detach(): Promise<void>}>;
+    newCDPSession(page: PlaywrightPageLike | Page): Promise<CdpSessionLike & {detach(): Promise<void>}>;
   };
 }
 
@@ -50,7 +50,11 @@ export async function createPlaywrightRecorder(
   recorder: CdpScreenRecorder;
   stop: () => Promise<Buffer>;
 }> {
-  const cdpSession = await (page as PlaywrightPageLike).context().newCDPSession(page as never);
+  const cdpSession = await (page as {
+    context(): {
+      newCDPSession(page: Page | PlaywrightPageLike): Promise<CdpSessionLike & {detach(): Promise<void>}>;
+    };
+  }).context().newCDPSession(page);
   const recorder = new CdpScreenRecorder(cdpSession);
   await recorder.start(options);
   return {
@@ -74,6 +78,7 @@ async function cli(): Promise<void> {
   const height = 720;
   const frameRate = 60;
 
+  const {chromium} = await import('playwright-core');
   const executablePath = await findChromeBinary();
   const browser = await chromium.launch({
     executablePath,

@@ -17,11 +17,12 @@
  * - `./capture-playwright.ts` for Playwright integration (`page.context().newCDPSession(page)`)
  */
 
-import {spawn} from 'node:child_process';
+import {spawn, type ChildProcess} from 'node:child_process';
 import {access, mkdtemp, readdir, rm, writeFile} from 'node:fs/promises';
 import {homedir, platform, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {parseArgs} from 'node:util';
 import type {Protocol} from 'devtools-protocol';
 import type {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js';
 
@@ -32,6 +33,26 @@ export interface CdpSessionLike {
     method: K,
     ...params: ProtocolMapping.Commands[K]['paramsType']
   ): Promise<ProtocolMapping.Commands[K]['returnType']>;
+}
+
+export interface LaunchChromeOptions {
+  explicitPath?: string;
+  width?: number;
+  height?: number;
+  headless?: boolean;
+  audio?: boolean;
+  uncap?: boolean;
+  extraArgs?: string[];
+  url?: string;
+}
+
+export interface LaunchedChrome {
+  proc: ChildProcess;
+  browserWsUrl: string;
+  httpBase: string;
+  pageTargetWs: string;
+  userDataDir: string;
+  close: () => Promise<void>;
 }
 
 interface CdpRpcError {
@@ -145,7 +166,7 @@ export class CdpScreenRecorder {
         if (eof) break;
       }
     } finally {
-      await this.session.send('IO.close', {handle});
+      await this.session.send('IO.close', {handle}).catch(() => {});
       this.streamHandle = undefined;
     }
     return Buffer.concat(chunks);
@@ -155,14 +176,44 @@ export class CdpScreenRecorder {
 /**
  * Minimal WebSocket-backed CDP session typed against `devtools-protocol`'s `ProtocolMapping.Commands`.
  */
-export async function connectCdpSession(wsUrl: string): Promise<CdpSessionLike & {close: () => void}> {
+export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000): Promise<CdpSessionLike & {close: () => void}> {
   const ws = new WebSocket(wsUrl);
+
   await new Promise<void>((resolve, reject) => {
-    ws.addEventListener('open', () => resolve(), {once: true});
-    ws.addEventListener('error', () => reject(new Error(`WebSocket connection failed: ${wsUrl}`)), {once: true});
+    let timer: NodeJS.Timeout | undefined;
+    if (connectTimeoutMs > 0) {
+      timer = setTimeout(() => {
+        try {
+          ws.close();
+        } catch {
+          // Ignore
+        }
+        reject(new Error(`WebSocket connection timed out after ${connectTimeoutMs}ms: ${wsUrl}`));
+      }, connectTimeoutMs);
+    }
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      ws.removeEventListener('open', onOpen);
+      ws.removeEventListener('error', onError);
+    };
+
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = () => {
+      cleanup();
+      reject(new Error(`WebSocket connection failed: ${wsUrl}`));
+    };
+
+    ws.addEventListener('open', onOpen);
+    ws.addEventListener('error', onError);
   });
 
   let nextId = 1;
+  let isClosed = false;
   const pending = new Map<
     number,
     {
@@ -170,6 +221,22 @@ export async function connectCdpSession(wsUrl: string): Promise<CdpSessionLike &
       reject: (err: Error) => void;
     }
   >();
+
+  const rejectAllPending = (err: Error) => {
+    isClosed = true;
+    for (const entry of pending.values()) {
+      entry.reject(err);
+    }
+    pending.clear();
+  };
+
+  ws.addEventListener('close', () => {
+    rejectAllPending(new Error(`WebSocket connection closed: ${wsUrl}`));
+  });
+
+  ws.addEventListener('error', () => {
+    rejectAllPending(new Error(`WebSocket error on connection: ${wsUrl}`));
+  });
 
   ws.addEventListener('message', (event) => {
     const msg = parseCdpRpcMessage(String(event.data));
@@ -189,6 +256,9 @@ export async function connectCdpSession(wsUrl: string): Promise<CdpSessionLike &
       method: K,
       ...args: ProtocolMapping.Commands[K]['paramsType']
     ): Promise<ProtocolMapping.Commands[K]['returnType']> {
+      if (isClosed) {
+        return Promise.reject(new Error(`Cannot send CDP command ${String(method)}: WebSocket is closed`));
+      }
       const id = nextId++;
       const params = args[0] ?? {};
       const {promise, resolve, reject} = Promise.withResolvers<ProtocolMapping.Commands[K]['returnType']>();
@@ -196,20 +266,47 @@ export async function connectCdpSession(wsUrl: string): Promise<CdpSessionLike &
         resolve: resolve as (val: CdpRpcMessage['result']) => void,
         reject,
       });
-      ws.send(JSON.stringify({id, method, params}));
+      try {
+        ws.send(JSON.stringify({id, method, params}));
+      } catch (err) {
+        pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
       return promise;
     },
     close() {
-      ws.close();
+      isClosed = true;
+      try {
+        ws.close();
+      } catch {
+        // Ignore close errors
+      }
+      rejectAllPending(new Error(`WebSocket closed by client: ${wsUrl}`));
     },
   };
 }
 
 /**
- * Resolves a local Chrome 153+ executable (checks CHROME_PATH, system paths, or Puppeteer cache).
+ * Resolves a local Chrome 153+ executable (checks explicitPath, CHROME_PATH, system paths, or Puppeteer cache).
  */
-export async function findChromeBinary(): Promise<string> {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+export async function findChromeBinary(explicitPath?: string): Promise<string> {
+  if (explicitPath) {
+    try {
+      await access(explicitPath);
+      return explicitPath;
+    } catch {
+      throw new Error(`Specified Chrome binary not found: ${explicitPath}`);
+    }
+  }
+
+  if (process.env.CHROME_PATH) {
+    try {
+      await access(process.env.CHROME_PATH);
+      return process.env.CHROME_PATH;
+    } catch {
+      // Continue searching
+    }
+  }
 
   const candidates = platform() === 'darwin'
     ? [
@@ -243,29 +340,185 @@ export async function findChromeBinary(): Promise<string> {
       return candidate;
     }
   } catch {
-    // Fall back to system binary candidates.
+    // Fall back to throw below.
   }
 
-  return candidates[0];
+  throw new Error('Could not find Google Chrome (M153+). Set CHROME_PATH or pass --chrome=/path/to/chrome');
+}
+
+/**
+ * Launches Chrome with a dedicated temporary user-data-dir and resolves the WebSocket endpoint and initial page target.
+ */
+export async function launchChrome(options: LaunchChromeOptions = {}): Promise<LaunchedChrome> {
+  const chromePath = await findChromeBinary(options.explicitPath);
+  const userDataDir = await mkdtemp(join(tmpdir(), 'cdp-rec-'));
+
+  const width = options.width ?? 1280;
+  const height = options.height ?? 720;
+  const headless = options.headless ?? (platform() !== 'darwin');
+
+  const chromeArgs = [
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-timer-throttling',
+    '--disable-renderer-backgrounding',
+    '--disable-backgrounding-occluded-windows',
+    `--user-data-dir=${userDataDir}`,
+    `--window-size=${width},${height}`,
+    '--remote-debugging-port=0',
+  ];
+
+  if (headless) {
+    chromeArgs.unshift('--headless=new');
+  }
+  if (platform() === 'linux') {
+    chromeArgs.push('--no-sandbox', '--disable-dev-shm-usage');
+  }
+  if (options.audio) {
+    chromeArgs.push('--autoplay-policy=no-user-gesture-required');
+  }
+  if (options.uncap) {
+    chromeArgs.push('--disable-frame-rate-limit', '--disable-gpu-vsync');
+  }
+  if (options.extraArgs) {
+    chromeArgs.push(...options.extraArgs);
+  }
+
+  chromeArgs.push(options.url ?? 'about:blank');
+
+  const proc = spawn(chromePath, chromeArgs, {
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+
+  let cleanedUp = false;
+  const cleanup = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    try {
+      proc.kill('SIGKILL');
+    } catch {
+      // Ignore
+    }
+    try {
+      await rm(userDataDir, {recursive: true, force: true});
+    } catch {
+      // Ignore
+    }
+  };
+
+  const sigintHandler = () => {
+    void cleanup().finally(() => process.exit(130));
+  };
+  const sigtermHandler = () => {
+    void cleanup().finally(() => process.exit(143));
+  };
+
+  process.once('SIGINT', sigintHandler);
+  process.once('SIGTERM', sigtermHandler);
+
+  try {
+    const browserWsUrl = await new Promise<string>((resolve, reject) => {
+      let stderrAcc = '';
+      const onData = (chunk: Buffer) => {
+        stderrAcc += chunk.toString();
+        const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(stderrAcc);
+        if (match) {
+          proc.stderr?.off('data', onData);
+          resolve(match[1]);
+        }
+      };
+      proc.stderr?.on('data', onData);
+      proc.once('error', reject);
+      proc.once('exit', code => reject(new Error(`Chrome exited early (${code})`)));
+    });
+
+    const httpBase = browserWsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*/, '');
+
+    // Poll /json/list until a non-devtools page target is ready (up to 5s)
+    let pageTargetWs: string | undefined;
+    const deadline = performance.now() + 5000;
+    while (performance.now() < deadline) {
+      try {
+        const resp = await fetch(`${httpBase}/json/list`);
+        if (resp.ok) {
+          const targets = parseTargetList(await resp.text());
+          const pageTarget = targets.find(t => t.type === 'page' && !t.url.startsWith('devtools://'));
+          if (pageTarget) {
+            pageTargetWs = pageTarget.webSocketDebuggerUrl;
+            break;
+          }
+        }
+      } catch {
+        // Retry
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    if (!pageTargetWs) {
+      throw new Error(`Timed out waiting for Chrome page target at ${httpBase}/json/list`);
+    }
+
+    return {
+      proc,
+      browserWsUrl,
+      httpBase,
+      pageTargetWs,
+      userDataDir,
+      close: async () => {
+        process.removeListener('SIGINT', sigintHandler);
+        process.removeListener('SIGTERM', sigtermHandler);
+        await cleanup();
+      },
+    };
+  } catch (err) {
+    process.removeListener('SIGINT', sigintHandler);
+    process.removeListener('SIGTERM', sigtermHandler);
+    await cleanup();
+    throw err;
+  }
 }
 
 /**
  * Parses duration from strings like '3000', '3000ms', '3s', '3', or numbers.
+ * Supports explicit `<num>ms` and `<num>s`. For unitless numbers or numeric strings,
+ * treats values `< 1000` as seconds (`val * 1000`) and values `>= 1000` as milliseconds.
+ * Throws on invalid or unparseable duration strings.
  */
 export function parseDuration(val: string | number | undefined, defaultMs = 3000): number {
   if (val == null) return defaultMs;
+  if (typeof val === 'number') {
+    if (Number.isNaN(val) || val <= 0) {
+      throw new Error(`Invalid duration value: ${val}`);
+    }
+    return val < 1000 ? val * 1000 : val;
+  }
   const str = String(val).trim();
-  if (str.endsWith('ms')) return parseFloat(str);
-  if (str.endsWith('s')) return parseFloat(str) * 1000;
+  if (!str) return defaultMs;
+  if (str.endsWith('ms')) {
+    const num = parseFloat(str.slice(0, -2));
+    if (Number.isNaN(num) || num <= 0) {
+      throw new Error(`Invalid duration value: ${val}`);
+    }
+    return num;
+  }
+  if (str.endsWith('s')) {
+    const num = parseFloat(str.slice(0, -1));
+    if (Number.isNaN(num) || num <= 0) {
+      throw new Error(`Invalid duration value: ${val}`);
+    }
+    return num * 1000;
+  }
   const num = parseFloat(str);
-  if (Number.isNaN(num)) return defaultMs;
-  return num <= 30 ? num * 1000 : num;
+  if (Number.isNaN(num) || num <= 0) {
+    throw new Error(`Invalid duration value: ${val}`);
+  }
+  return num < 1000 ? num * 1000 : num;
 }
 
 async function cli(): Promise<void> {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
 
-  if (args.includes('--help') || args.includes('-h')) {
+  if (rawArgs.includes('--help') || rawArgs.includes('-h')) {
     console.log(`Usage: node capture-cdp.ts [url] [output] [duration] [options]
 
 Arguments:
@@ -285,96 +538,93 @@ Options:
   --headed                    Run in headed mode (default on macOS)
   --headless                  Run in --headless=new mode (default on Linux)
   --with-devtools             Open screencast + DevTools side-by-side in inspector.html
+  --chrome=<path>             Path to Google Chrome executable
   -h, --help                  Show this help message
 `);
     return;
   }
 
-  const getFlagVal = (flag: string): string | undefined => {
-    const exact = args.find(a => a.startsWith(flag + '='));
-    if (exact) return exact.slice(flag.length + 1);
-    const idx = args.indexOf(flag);
-    if (idx !== -1 && args[idx + 1] && !args[idx + 1].startsWith('--')) {
-      return args[idx + 1];
-    }
-    return undefined;
-  };
-
-  const positional = args.filter((a, i) => {
-    if (a.startsWith('--')) return false;
-    const prev = args[i - 1];
-    if (prev && prev.startsWith('--') && !prev.includes('=')) return false;
-    return true;
+  const parsed = parseArgs({
+    args: rawArgs,
+    options: {
+      duration: {type: 'string'},
+      fps: {type: 'string'},
+      frameRate: {type: 'string'},
+      width: {type: 'string'},
+      height: {type: 'string'},
+      warmup: {type: 'string'},
+      'capture-area': {type: 'string'},
+      audio: {type: 'boolean'},
+      'no-audio': {type: 'boolean'},
+      headed: {type: 'boolean'},
+      headless: {type: 'boolean'},
+      'with-devtools': {type: 'boolean'},
+      chrome: {type: 'string'},
+      url: {type: 'string'},
+      out: {type: 'string'},
+      output: {type: 'string'},
+      help: {type: 'boolean', short: 'h'},
+    },
+    allowPositionals: true,
   });
 
-  const url = getFlagVal('--url') ?? positional[0] ?? 'http://localhost:8080/';
-  const outPath = getFlagVal('--out') ?? getFlagVal('--output') ?? positional[1] ?? 'demo-60fps.mp4';
-  const rawDuration = getFlagVal('--duration') ?? positional[2];
+  const url = parsed.values.url ?? parsed.positionals[0] ?? 'http://localhost:8080/';
+  const outPath = parsed.values.out ?? parsed.values.output ?? parsed.positionals[1] ?? 'demo-60fps.mp4';
+  const rawDuration = parsed.values.duration ?? parsed.positionals[2];
   const durationMs = parseDuration(rawDuration, 3000);
-  const width = parseInt(getFlagVal('--width') ?? '1280', 10);
-  const height = parseInt(getFlagVal('--height') ?? '720', 10);
-  const frameRate = parseInt(getFlagVal('--fps') ?? getFlagVal('--frameRate') ?? '60', 10);
-  const warmupMs = parseInt(getFlagVal('--warmup') ?? '1000', 10);
-  const rawArea = getFlagVal('--capture-area');
+  const width = parseInt(parsed.values.width ?? '1280', 10);
+  const height = parseInt(parsed.values.height ?? '720', 10);
+  const frameRate = parseInt(parsed.values.fps ?? parsed.values.frameRate ?? '60', 10);
+  const warmupMs = parseInt(parsed.values.warmup ?? '1000', 10);
+  const rawArea = parsed.values['capture-area'];
   const captureArea: Protocol.Page.StartScreenRecordingRequest['captureArea'] =
     rawArea === 'browserWindow' ? 'browserWindow' : 'target';
-  const audio = args.includes('--audio') ? true : !args.includes('--no-audio');
-  const headless = args.includes('--headless') || (!args.includes('--headed') && platform() !== 'darwin');
-  const withDevTools = args.includes('--with-devtools');
+  const audio = parsed.values.audio ? true : !parsed.values['no-audio'];
+  const headless = parsed.values.headless || (!parsed.values.headed && platform() !== 'darwin');
+  const withDevTools = Boolean(parsed.values['with-devtools']);
+  const explicitChrome = parsed.values.chrome;
 
-  const chromePath = await findChromeBinary();
-  const userDataDir = await mkdtemp(join(tmpdir(), 'cdp-rec-'));
-  const chromeArgs = [
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-background-timer-throttling',
-    '--disable-renderer-backgrounding',
-    '--disable-backgrounding-occluded-windows',
+  const extraArgs = [
     '--enable-gpu-rasterization',
-    `--user-data-dir=${userDataDir}`,
-    `--window-size=${width},${height}`,
-    '--remote-debugging-port=0',
     '--remote-allow-origins=devtools://devtools',
   ];
-  if (headless) {
-    chromeArgs.unshift('--headless=new');
-  }
-  if (audio) {
-    chromeArgs.push('--autoplay-policy=no-user-gesture-required');
-  }
-  chromeArgs.push(url);
 
-  const chrome = spawn(chromePath, chromeArgs);
+  const launched = await launchChrome({
+    explicitPath: explicitChrome,
+    width,
+    height,
+    headless,
+    audio,
+    extraArgs,
+    url,
+  });
 
   try {
-    const browserWsUrl = await new Promise<string>((resolve, reject) => {
-      chrome.stderr.on('data', (chunk: Buffer) => {
-        const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(chunk.toString());
-        if (match) resolve(match[1]);
-      });
-      chrome.once('error', reject);
-      chrome.once('exit', code => reject(new Error(`Chrome exited early (${code})`)));
-    });
-
-    const httpBase = browserWsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*/, '');
-    await new Promise(r => setTimeout(r, 800));
-
-    const targets = parseTargetList(await (await fetch(`${httpBase}/json/list`)).text());
-    const pageTarget = targets.find(t => t.type === 'page' && !t.url.startsWith('devtools://'));
-    if (!pageTarget) throw new Error('No page target found.');
-
-    let recordTargetWs = pageTarget.webSocketDebuggerUrl;
+    let recordTargetWs = launched.pageTargetWs;
 
     if (withDevTools) {
-      const wsHost = pageTarget.webSocketDebuggerUrl.replace(/^ws:\/\//, '');
+      const wsHost = launched.pageTargetWs.replace(/^ws:\/\//, '');
       const inspectorUrl = `devtools://devtools/bundled/inspector.html?ws=${wsHost}`;
-      const browserSession = await connectCdpSession(browserWsUrl);
+      const browserSession = await connectCdpSession(launched.browserWsUrl);
       const {targetId} = await browserSession.send('Target.createTarget', {url: inspectorUrl});
       browserSession.close();
 
-      await new Promise(r => setTimeout(r, 2000));
-      const updatedTargets = parseTargetList(await (await fetch(`${httpBase}/json/list`)).text());
-      const inspectorTarget = updatedTargets.find(t => t.id === targetId);
+      const deadline = performance.now() + 5000;
+      let inspectorTarget: CdpTargetInfo | undefined;
+      while (performance.now() < deadline) {
+        try {
+          const resp = await fetch(`${launched.httpBase}/json/list`);
+          if (resp.ok) {
+            const targets = parseTargetList(await resp.text());
+            inspectorTarget = targets.find(t => t.id === targetId);
+            if (inspectorTarget) break;
+          }
+        } catch {
+          // Retry
+        }
+        await new Promise(r => setTimeout(r, 50));
+      }
+
       if (!inspectorTarget) throw new Error('Failed to find inspector.html target.');
       recordTargetWs = inspectorTarget.webSocketDebuggerUrl;
     }
@@ -412,12 +662,14 @@ Options:
     await writeFile(outPath, mp4Buffer);
     console.log(`Saved ${outPath} (${mp4Buffer.byteLength.toLocaleString()} bytes, duration: ${durationMs}ms, ${width}x${height} @ ${frameRate}fps)`);
   } finally {
-    chrome.kill();
-    await rm(userDataDir, {recursive: true, force: true});
+    await launched.close();
   }
   process.exit(0);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  cli();
+  cli().catch((err: Error) => {
+    console.error(err);
+    process.exit(1);
+  });
 }

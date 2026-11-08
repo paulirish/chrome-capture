@@ -23,7 +23,7 @@
 import {writeFile} from 'node:fs/promises';
 import {platform} from 'node:os';
 import {fileURLToPath} from 'node:url';
-import puppeteer, {type Page} from 'puppeteer-core';
+import type {Page} from 'puppeteer-core';
 import {
   CdpScreenRecorder,
   type CdpSessionLike,
@@ -70,6 +70,7 @@ async function cli(): Promise<void> {
   const height = 720;
   const frameRate = 60;
 
+  const {default: puppeteer} = await import('puppeteer-core');
   const executablePath = await findChromeBinary();
   const browser = await puppeteer.launch({
     executablePath,
