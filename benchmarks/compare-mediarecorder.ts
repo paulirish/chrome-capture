@@ -112,13 +112,8 @@ window.__recordTab = async ({width, height, fps, mimeType, durationMs, videoBits
   await readerDone.catch(() => {});
 
   const blob = new Blob(chunks, { type: mimeType });
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 8192) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
-  }
   return {
-    b64: btoa(bin),
+    b64: new Uint8Array(await blob.arrayBuffer()).toBase64(),
     mimeUsed: rec.mimeType,
     settings,
     trackTimestampsUs: timestamps,

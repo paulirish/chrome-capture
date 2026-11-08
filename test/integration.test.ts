@@ -48,16 +48,13 @@ async function verifyMp4(filePath: string): Promise<void> {
   assert.ok(fileBytes.includes('av01'), 'Expected av01 codec box in MP4 binary');
 }
 
+const LAUNCH_ARGS = ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader'];
+
 describe('End-to-End Integration Tests (Real Headless Chrome M153+)', {timeout: 60_000}, () => {
   it('records 60fps video with puppeteer-core and startRecording(page)', async () => {
     const executablePath = await findChromeBinary();
-    const outputPath = join(tmpdir(), `pptr-test-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`);
-
-    const browser = await puppeteer.launch({
-      executablePath,
-      headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader'],
-    });
+    const outputPath = join(tmpdir(), `pptr-test-${Date.now()}.mp4`);
+    const browser = await puppeteer.launch({executablePath, headless: true, args: LAUNCH_ARGS});
 
     try {
       const page = await browser.newPage();
@@ -65,18 +62,8 @@ describe('End-to-End Integration Tests (Real Headless Chrome M153+)', {timeout: 
       await page.setContent(HTML_CANVAS_PAGE);
 
       {
-        await using _rec = await startRecording(page, {
-          frameRate: 60,
-          maxWidth: 640,
-          maxHeight: 360,
-          outputPath,
-        });
-
-        // Drive real page interactions
-        for (let i = 0; i < 5; i++) {
-          await page.mouse.move(50 + i * 20, 50 + i * 20);
-          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-        }
+        await using _rec = await startRecording(page, {frameRate: 60, maxWidth: 640, maxHeight: 360, outputPath});
+        await page.mouse.move(100, 100);
         await new Promise((resolve) => setTimeout(resolve, 600));
       }
 
@@ -89,30 +76,16 @@ describe('End-to-End Integration Tests (Real Headless Chrome M153+)', {timeout: 
 
   it('records 60fps video with playwright-core and startRecording(page)', async () => {
     const executablePath = await findChromeBinary();
-    const outputPath = join(tmpdir(), `playwright-test-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`);
-
-    const browser = await chromium.launch({
-      executablePath,
-      headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader'],
-    });
+    const outputPath = join(tmpdir(), `playwright-test-${Date.now()}.mp4`);
+    const browser = await chromium.launch({executablePath, headless: true, args: LAUNCH_ARGS});
 
     try {
-      const context = await browser.newContext({viewport: {width: 640, height: 360}});
-      const page = await context.newPage();
+      const page = await browser.newPage({viewport: {width: 640, height: 360}});
       await page.setContent(HTML_CANVAS_PAGE);
 
       {
-        await using _rec = await startRecording(page, {
-          frameRate: 60,
-          maxWidth: 640,
-          maxHeight: 360,
-          outputPath,
-        });
-
-        // Drive real page actions
+        await using _rec = await startRecording(page, {frameRate: 60, maxWidth: 640, maxHeight: 360, outputPath});
         await page.locator('canvas').click();
-        await page.mouse.move(100, 100);
         await new Promise((resolve) => setTimeout(resolve, 600));
       }
 
@@ -125,47 +98,34 @@ describe('End-to-End Integration Tests (Real Headless Chrome M153+)', {timeout: 
 
   it('records 60fps video with playwright-core and screenRecordingFixture', async () => {
     const executablePath = await findChromeBinary();
-    const tempDir = join(tmpdir(), `playwright-fixture-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-
-    const browser = await chromium.launch({
-      executablePath,
-      headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader'],
-    });
-
-    const attachedFiles: {name: string; path?: string; contentType?: string}[] = [];
-    const mockTestInfo = {
-      outputPath: (filename: string): string => join(tempDir, filename),
-      attach: async (name: string, options: {path?: string; contentType?: string}): Promise<void> => {
-        attachedFiles.push({name, path: options.path, contentType: options.contentType});
-      },
-    };
+    const tempDir = join(tmpdir(), `playwright-fixture-${Date.now()}`);
+    const browser = await chromium.launch({executablePath, headless: true, args: LAUNCH_ARGS});
+    const attachedFiles: Array<{name: string; path?: string; contentType?: string}> = [];
 
     try {
-      const context = await browser.newContext({viewport: {width: 640, height: 360}});
-      const page = await context.newPage();
+      const page = await browser.newPage({viewport: {width: 640, height: 360}});
       await page.setContent(HTML_CANVAS_PAGE);
 
-      const [fixtureFn] = screenRecordingFixture({
-        frameRate: 60,
-        maxWidth: 640,
-        maxHeight: 360,
-        auto: true,
-      });
+      const [fixtureFn] = screenRecordingFixture({frameRate: 60, maxWidth: 640, maxHeight: 360, auto: true});
+      await fixtureFn(
+        {page},
+        async () => {
+          await page.locator('canvas').click();
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        },
+        {
+          outputPath: (filename: string) => join(tempDir, filename),
+          attach: async (name: string, options: {path?: string; contentType?: string}) => {
+            attachedFiles.push({name, path: options.path, contentType: options.contentType});
+          },
+        },
+      );
 
-      await fixtureFn({page}, async () => {
-        await page.locator('canvas').click();
-        await page.mouse.move(120, 80);
-        await new Promise((resolve) => setTimeout(resolve, 600));
-      }, mockTestInfo);
-
-      assert.equal(attachedFiles.length, 1, 'Expected 1 attached file from screenRecordingFixture');
-      const attachment = attachedFiles[0];
-      assert.equal(attachment?.name, 'video-60fps');
-      assert.equal(attachment?.contentType, 'video/mp4');
-      assert.ok(attachment?.path, 'Expected attachment to have a valid file path');
-
-      await verifyMp4(attachment.path);
+      assert.equal(attachedFiles.length, 1);
+      assert.equal(attachedFiles[0]?.name, 'video-60fps');
+      assert.equal(attachedFiles[0]?.contentType, 'video/mp4');
+      assert.ok(attachedFiles[0]?.path);
+      await verifyMp4(attachedFiles[0].path);
     } finally {
       await browser.close();
       await rm(tempDir, {recursive: true, force: true});

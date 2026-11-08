@@ -336,17 +336,12 @@ Options:
 
   const targets = [...parsed.positionals];
   if (parsed.values.dir) {
-    try {
-      const entries = readdirSync(parsed.values.dir);
-      for (const entry of entries) {
-        if (entry.endsWith('.mp4') || entry.endsWith('.webm')) {
-          targets.push(join(parsed.values.dir, entry));
-        }
-      }
-    } catch (err) {
-      console.error(`Error reading directory ${parsed.values.dir}:`, err);
-      process.exit(1);
-    }
+    const dir = parsed.values.dir;
+    targets.push(
+      ...readdirSync(dir)
+        .filter(f => f.endsWith('.mp4') || f.endsWith('.webm'))
+        .map(f => join(dir, f)),
+    );
   }
 
   if (targets.length === 0) {

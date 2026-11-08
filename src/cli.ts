@@ -13,16 +13,15 @@
  *   node src/cli.ts https://paulirish.github.io/chrome-capture-60fps/ demo.mp4 4s
  */
 
-import {writeFile} from 'node:fs/promises';
 import {platform} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 import type {Protocol} from 'devtools-protocol';
 import {
-  CdpScreenRecorder,
   connectCdpSession,
   launchChrome,
   parseDuration,
+  startRecording,
 } from './index.ts';
 
 export async function cli(): Promise<void> {
@@ -140,20 +139,19 @@ Options:
       await new Promise(r => setTimeout(r, warmupMs));
     }
 
-    const recorder = new CdpScreenRecorder(session);
-    await recorder.start({
+    const recording = await startRecording(session, {
       frameRate,
       audio,
       maxWidth: width,
       maxHeight: height,
       captureArea,
+      outputPath: outPath,
     });
 
     await new Promise(r => setTimeout(r, durationMs));
-    const mp4Buffer = await recorder.stop();
+    const mp4Buffer = await recording.stop();
     session.close();
 
-    await writeFile(outPath, mp4Buffer);
     console.log(`Saved ${outPath} (${mp4Buffer.byteLength.toLocaleString()} bytes, duration: ${durationMs}ms, ${width}x${height} @ ${frameRate}fps)`);
   } finally {
     await launched.close();

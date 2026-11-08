@@ -118,24 +118,13 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
   await new Promise<void>((resolve, reject) => {
     const timer = connectTimeoutMs > 0
       ? setTimeout(() => {
-          try {
-            ws.close();
-          } catch {
-            // Ignore
-          }
+          try { ws.close(); } catch {}
           reject(new Error(`WebSocket connection timed out after ${connectTimeoutMs}ms: ${wsUrl}`));
         }, connectTimeoutMs)
       : undefined;
 
-    ws.addEventListener('open', () => {
-      clearTimeout(timer);
-      resolve();
-    }, {once: true});
-
-    ws.addEventListener('error', () => {
-      clearTimeout(timer);
-      reject(new Error(`WebSocket connection failed: ${wsUrl}`));
-    }, {once: true});
+    ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, {once: true});
+    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error(`WebSocket connection failed: ${wsUrl}`)); }, {once: true});
   });
 
   type CommandReturn = ProtocolMapping.Commands[keyof ProtocolMapping.Commands]['returnType'];
@@ -151,23 +140,15 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
 
   ws.addEventListener('close', () => rejectAllPending(new Error(`WebSocket connection closed: ${wsUrl}`)));
   ws.addEventListener('error', () => rejectAllPending(new Error(`WebSocket error on connection: ${wsUrl}`)));
-
   ws.addEventListener('message', (event) => {
     try {
-      const msg = JSON.parse(String(event.data)) as {
-        id?: number;
-        result?: CommandReturn;
-        error?: {code: number; message: string};
-      };
-      if (!msg || typeof msg.id !== 'number') return;
-      const entry = pending.get(msg.id);
-      if (!entry) return;
+      const msg = JSON.parse(String(event.data)) as {id?: number; result?: CommandReturn; error?: {code: number; message: string}};
+      const entry = typeof msg?.id === 'number' ? pending.get(msg.id) : undefined;
+      if (!entry || typeof msg.id !== 'number') return;
       pending.delete(msg.id);
       if (msg.error) entry.reject(new Error(`${msg.error.message} (${msg.error.code})`));
       else entry.resolve(msg.result as CommandReturn);
-    } catch {
-      // Ignore malformed JSON frames
-    }
+    } catch {}
   });
 
   return {
@@ -175,18 +156,12 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
       method: K,
       ...args: ProtocolMapping.Commands[K]['paramsType']
     ): Promise<ProtocolMapping.Commands[K]['returnType']> {
-      if (isClosed) {
-        return Promise.reject(new Error(`Cannot send CDP command ${String(method)}: WebSocket is closed`));
-      }
+      if (isClosed) return Promise.reject(new Error(`Cannot send CDP command ${String(method)}: WebSocket is closed`));
       const id = nextId++;
-      const params = args[0] ?? {};
       const {promise, resolve, reject} = Promise.withResolvers<ProtocolMapping.Commands[K]['returnType']>();
-      pending.set(id, {
-        resolve: resolve as (val: CommandReturn) => void,
-        reject,
-      });
+      pending.set(id, {resolve: resolve as (val: CommandReturn) => void, reject});
       try {
-        ws.send(JSON.stringify({id, method, params}));
+        ws.send(JSON.stringify({id, method, params: args[0] ?? {}}));
       } catch (err) {
         pending.delete(id);
         reject(err instanceof Error ? err : new Error(String(err)));
@@ -195,11 +170,7 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
     },
     close() {
       isClosed = true;
-      try {
-        ws.close();
-      } catch {
-        // Ignore close errors
-      }
+      try { ws.close(); } catch {}
       rejectAllPending(new Error(`WebSocket closed by client: ${wsUrl}`));
     },
   };
@@ -274,42 +245,24 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
   const chromePath = await findChromeBinary(options.explicitPath);
   const userDataDir = await mkdtemp(join(tmpdir(), 'cdp-rec-'));
 
-  const width = options.width ?? 1280;
-  const height = options.height ?? 720;
-  const headless = options.headless ?? true;
-
   const chromeArgs = [
+    (options.headless ?? true) ? '--headless=new' : '',
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding',
     '--disable-backgrounding-occluded-windows',
     `--user-data-dir=${userDataDir}`,
-    `--window-size=${width},${height}`,
+    `--window-size=${options.width ?? 1280},${options.height ?? 720}`,
     '--remote-debugging-port=0',
-  ];
+    ...(platform() === 'linux' ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
+    ...(options.audio ? ['--autoplay-policy=no-user-gesture-required'] : []),
+    ...(options.uncap ? ['--disable-frame-rate-limit', '--disable-gpu-vsync'] : []),
+    ...(options.extraArgs ?? []),
+    options.url ?? 'about:blank',
+  ].filter(Boolean);
 
-  if (headless) {
-    chromeArgs.unshift('--headless=new');
-  }
-  if (platform() === 'linux') {
-    chromeArgs.push('--no-sandbox', '--disable-dev-shm-usage');
-  }
-  if (options.audio) {
-    chromeArgs.push('--autoplay-policy=no-user-gesture-required');
-  }
-  if (options.uncap) {
-    chromeArgs.push('--disable-frame-rate-limit', '--disable-gpu-vsync');
-  }
-  if (options.extraArgs) {
-    chromeArgs.push(...options.extraArgs);
-  }
-
-  chromeArgs.push(options.url ?? 'about:blank');
-
-  const proc = spawn(chromePath, chromeArgs, {
-    stdio: ['ignore', 'ignore', 'pipe'],
-  });
+  const proc = spawn(chromePath, chromeArgs, {stdio: ['ignore', 'ignore', 'pipe']});
 
   let cleanedUp = false;
   const cleanup = async () => {
@@ -317,40 +270,19 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
     cleanedUp = true;
     proc.stderr?.destroy();
     if (proc.exitCode === null && proc.signalCode === null) {
-      const exitPromise = new Promise<void>(resolve => {
-        proc.once('exit', () => resolve());
-      });
-      try {
-        proc.kill('SIGTERM');
-      } catch {
-        // Ignore
-      }
-      const killTimer = setTimeout(() => {
-        try {
-          proc.kill('SIGKILL');
-        } catch {
-          // Ignore
-        }
-      }, 500);
+      const exitPromise = new Promise<void>(resolve => proc.once('exit', () => resolve()));
+      try { proc.kill('SIGTERM'); } catch {}
+      const killTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 500);
       killTimer.unref();
       await exitPromise;
       clearTimeout(killTimer);
     }
     proc.unref();
-    try {
-      await rm(userDataDir, {recursive: true, force: true});
-    } catch {
-      // Ignore
-    }
+    await rm(userDataDir, {recursive: true, force: true}).catch(() => {});
   };
 
-  const sigintHandler = () => {
-    void cleanup().finally(() => process.exit(130));
-  };
-  const sigtermHandler = () => {
-    void cleanup().finally(() => process.exit(143));
-  };
-
+  const sigintHandler = () => void cleanup().finally(() => process.exit(130));
+  const sigtermHandler = () => void cleanup().finally(() => process.exit(143));
   process.once('SIGINT', sigintHandler);
   process.once('SIGTERM', sigtermHandler);
 
@@ -363,22 +295,15 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
         proc.off('exit', onExit);
       };
       const onData = (chunk: Buffer) => {
-        stderrAcc += chunk.toString();
-        const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(stderrAcc);
+        const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(stderrAcc += chunk.toString());
         if (match) {
           cleanupListeners();
           proc.stderr?.destroy();
           resolve(match[1]);
         }
       };
-      const onError = (err: Error) => {
-        cleanupListeners();
-        reject(err);
-      };
-      const onExit = (code: number | null) => {
-        cleanupListeners();
-        reject(new Error(`Chrome exited early (${code})`));
-      };
+      const onError = (err: Error) => { cleanupListeners(); reject(err); };
+      const onExit = (code: number | null) => { cleanupListeners(); reject(new Error(`Chrome exited early (${code})`)); };
       proc.stderr?.on('data', onData);
       proc.once('error', onError);
       proc.once('exit', onExit);
@@ -401,9 +326,7 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
       browserSession.close();
     }
 
-    if (!pageTargetWs) {
-      throw new Error('Timed out waiting for Chrome page target');
-    }
+    if (!pageTargetWs) throw new Error('Timed out waiting for Chrome page target');
 
     return {
       proc,
@@ -431,16 +354,12 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
  * Throws on invalid or unparseable duration strings.
  */
 export function parseDuration(val: string | number | undefined, defaultMs = 3000): number {
-  if (val == null) return defaultMs;
-  const str = String(val).trim();
-  if (!str) return defaultMs;
-  const match = /^([0-9]*\.?[0-9]+)\s*(ms|s)?$/i.exec(str);
+  if (val == null || String(val).trim() === '') return defaultMs;
+  const match = /^([0-9]*\.?[0-9]+)\s*(ms|s)?$/i.exec(String(val).trim());
   if (!match) throw new Error(`Invalid duration value: ${val}`);
   const num = parseFloat(match[1]);
   if (num <= 0) throw new Error(`Invalid duration value: ${val}`);
-  if (match[2]?.toLowerCase() === 'ms') return num;
-  if (match[2]?.toLowerCase() === 's') return num * 1000;
-  return num < 1000 ? num * 1000 : num;
+  return match[2]?.toLowerCase() === 's' || (!match[2] && num < 1000) ? num * 1000 : num;
 }
 
 export interface PlaywrightPageLike {
