@@ -6,13 +6,16 @@ Record a Chrome tab at 60-120fps (up to 4K) straight to an AV1 `.mp4`. Tab audio
 npx chrome-capture https://paulirish.github.io/chrome-capture/ demo.mp4 4s
 ```
 
-## New in Chrome M153: `Page.startScreenRecording`
+## Chrome 153+ has a native MP4 tab recorder! 😻
 
 For the past ~decade, [`Page.startScreencast`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast) was the only way to get video frames out of CDP. That API is from ~2013, built so DevTools could show a live preview of a USB-tethered Android phone. Both Playwright (`recordVideo`) and Puppeteer (`page.screencast()`) built their video capture on top of it: Chrome JPEG-encodes each frame, base64s it into a JSON message over the CDP WebSocket, waits for an ack, and the library pipes those JPEGs into `ffmpeg`.
 
 In Sept 2026, [`Page.startScreenRecording`](https://chromium-review.googlesource.com/c/chromium/src/+/7736461) landed in Chrome M153. Frames go straight from the compositor to an out-of-process encoder over shared memory, and Chrome writes AV1 (plus optional tab audio) into the mp4 as it goes. 💅 Stopping is basically instant because the encoding is already done (no multi-second `ffmpeg` flush on `context.close()`). And you can start/stop recording whenever you want: log in, warm up the page, then record just the interaction.
 
 In short: It's hot. It's good. really good.
+
+<!-- senna-800kg-1920x1080-120fps.mp4 -->
+https://github.com/user-attachments/assets/e17ffe7e-e868-40d5-adc9-df85eeb3dae8
 
 Puppeteer v25.10+ wraps this in an experimental `page.record()` (deprecating `page.screencast()`). Playwright is still on `Page.startScreencast` ([#42929](https://github.com/microsoft/playwright/pull/42929), [#42752](https://github.com/microsoft/playwright/pull/42752)), with no open issue tracking `Page.startScreenRecording` yet.
 
@@ -101,9 +104,14 @@ Same 6.4s UI replay (typing, clicks, drag-and-drop, scroll) at 1280x800, recorde
 
 So.. 2.4x the frames, in a smaller file, at better quality, and the run finishes ~10s sooner. At 4K the gap is sillier: Playwright's stop takes 20.5s, this takes 91ms.
 
+**What about bitrate and visual quality?** CDP doesn't expose a bitrate or CRF knob yet. Under the hood, Chrome encodes on the fly with `libaom` AV1 in realtime 1-pass VBR and scales target bitrate linearly with pixel rate (`2 Mbps` at 720p30 -> `9 Mbps` at 1080p60 -> `18 Mbps` at 1080p120 -> `72 Mbps` at 4K120). That easily beats Playwright's `recordVideo` (which pipes `quality: 80` JPEGs into a fixed 1 Mbps VP8 stream), though an offline `Page.startScreencast({format: 'png'})` -> `ffmpeg` pipeline will still win on lossless 1px text fidelity if you only need ~10-15fps.
+
 ### How high can it go?
 
 Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test ([demo](https://paulirish.github.io/chrome-capture/)) draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames:
+
+<!-- barcode-1920x1080-120fps.mp4 -->
+https://github.com/user-attachments/assets/67734ccb-b986-4d66-a7d4-84bf05f7af87
 
 * **Mac (`--headless=new`)**: **4K @ 60fps** (60 unique fps). Headless Chrome still gets full Metal GPU acceleration, so 1080p, 1440p, and 4K all lock at 60fps, but headless drives `rAF` from a synthetic 60Hz timer instead of the display's `CVDisplayLink`.
 * **Mac (`--headful` on 120Hz ProMotion)**: **1080p @ 120fps** and **4K @ 120fps** (`119.9 fps`, 59.8 Mbps AV1 + stereo Opus on Three.js/WebGL2 scenes in [`examples/capture-demos.ts`](./examples/capture-demos.ts)).
