@@ -1,6 +1,6 @@
 # chrome-capture
 
-Record a Chrome tab at 60fps (up to 120fps, up to 4K) straight to an AV1 `.mp4`. Tab audio too, if you want it. No ffmpeg.
+Record a Chrome tab at 60-120fps (up to 4K) straight to an AV1 `.mp4`. Tab audio too, if you want it. No ffmpeg.
 
 ```bash
 npx chrome-capture https://paulirish.github.io/chrome-capture/ demo.mp4 4s
@@ -100,11 +100,10 @@ So.. 2.4x the frames, in a smaller file, at better quality, and the run finishes
 
 ### How high can it go?
 
-Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test ([demo](https://paulirish.github.io/chrome-capture/)) draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames.
+Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test ([demo](https://paulirish.github.io/chrome-capture/)) draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames:
 
-On a 120Hz ProMotion M4 Max:
-* `4K @ 60fps`: 60 unique frames/sec (both `--headless` and `--headful`)
-* `1080p @ 120fps`: 120 unique frames/sec with `--headful` (`--headless=new` on macOS still gets full Metal GPU acceleration for 4K@60, but ticks `rAF` from a 60Hz timer instead of the 120Hz `CVDisplayLink`).
-* `4K @ 120fps`: 120 frames/sec (`1,439` frames in 12.0s at 59.8 Mbps AV1 + stereo Opus) on a GPU-bound Three.js/WebGL2 scene ([`examples/capture-demos.ts`](./examples/capture-demos.ts)).
+* **Mac (`--headless=new`)**: **4K @ 60fps** (60 unique fps). Headless Chrome still gets full Metal GPU acceleration, so 1080p, 1440p, and 4K all lock at 60fps, but headless drives `rAF` from a synthetic 60Hz timer instead of the display's `CVDisplayLink`.
+* **Mac (`--headful` on 120Hz ProMotion)**: **1080p @ 120fps** and **4K @ 120fps** (`119.9 fps`, 59.8 Mbps AV1 + stereo Opus on Three.js/WebGL2 scenes in [`examples/capture-demos.ts`](./examples/capture-demos.ts)).
+* **Headless Linux (no GPU, CPU-only CI/Cloudtop)**: **1080p @ 60fps** (60.4 unique fps) or **1440p @ 60fps** (~58 unique fps) on standard 60Hz vsync, and up to **1080p @ 75-83fps** if you uncap vsync (`--disable-frame-rate-limit --disable-gpu-vsync`).
 
-One macOS gotcha: it's tempting to pass `--disable-frame-rate-limit --disable-gpu-vsync`, but don't do it on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the GPU command queue, and starves the capture readback (dropping 4K@60 to 0.3fps). Leave native vsync alone; it's what gets you to 120.
+One macOS gotcha: don't pass `--disable-frame-rate-limit --disable-gpu-vsync` on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the Metal command queue, and starves the capture readback (dropping 4K@60 to 0.3fps). Leave native vsync alone; it's what gets you to 120.
