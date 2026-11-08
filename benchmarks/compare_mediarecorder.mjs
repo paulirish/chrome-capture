@@ -7,7 +7,7 @@
 /**
  * Head-to-head MediaRecorder (getDisplayMedia({preferCurrentTab: true}) + MediaRecorder,
  * matching `tab-recorder.js`) benchmark runner using the same 16-bit rAF pixel barcode
- * canvas workload as `stress-test-barcode.py`.
+ * canvas workload as `stress-test-barcode.ts`.
  *
  * Usage:
  *   node benchmarks/compare_mediarecorder.mjs
@@ -24,7 +24,7 @@ import {createServer} from 'node:http';
 import {platform, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {connectCdpSession} from '../capture-cdp.js';
+import {connectCdpSession} from '../capture-cdp.ts';
 
 async function findChrome(explicitPath) {
   if (explicitPath) return explicitPath;

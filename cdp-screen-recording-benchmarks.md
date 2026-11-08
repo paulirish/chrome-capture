@@ -54,7 +54,7 @@ Measured on an identical 10-step UI interaction sequence (typing, hotkeys, singl
 
 Container packet counts (`ffprobe`) cannot distinguish between 90 genuinely rendered frames/sec and a 60Hz framebuffer duplicated 90 times.
 
-In [`stress-test-barcode.py`](./stress-test-barcode.py), every `requestAnimationFrame` callback increments a monotonic counter `f` and draws a **16-bit binary pixel barcode** (`18` blocks of `24x32` pure black/white pixels with a 2-block sync header) at the top-left of the canvas alongside a full-viewport animated gradient and moving bars. After recording, `ffmpeg -vsync 0` samples the center luminance of each barcode block on every encoded video packet to measure:
+In [`stress-test-barcode.ts`](./stress-test-barcode.ts), every `requestAnimationFrame` callback increments a monotonic counter `f` and draws a **16-bit binary pixel barcode** (`18` blocks of `24x32` pure black/white pixels with a 2-block sync header) at the top-left of the canvas alongside a full-viewport animated gradient and moving bars. After recording, `ffmpeg -vsync 0` samples the center luminance of each barcode block on every encoded video packet to measure:
 * **Container FPS**: Total encoded packets / duration.
 * **True Unique Visual FPS**: Distinct decoded `rAF` barcode IDs / duration.
 * **Duplicate Frame %**: Packets where `barcode[i] == barcode[i - 1]`.
@@ -191,7 +191,7 @@ Comparing `Page.startScreenRecording` against in-renderer `navigator.mediaDevice
 
 ### A. Which Chromium Capture Pipeline Should You Use?
 
-| Feature / Dimension | CDP `Page.startScreenRecording` ([`capture-cdp.js`](./capture-cdp.js)) | In-Renderer `getDisplayMedia` + `MediaRecorder` ([`tab-recorder.js`](./tab-recorder.js)) | Playwright `record_video_dir` (`Page.startScreencast`) |
+| Feature / Dimension | CDP `Page.startScreenRecording` ([`capture-cdp.ts`](./capture-cdp.ts)) | In-Renderer `getDisplayMedia` + `MediaRecorder` ([`tab-recorder.js`](./tab-recorder.js)) | Playwright `record_video_dir` (`Page.startScreencast`) |
 | :--- | :--- | :--- | :--- |
 | **Capture Layer** | Browser Process (`WebContentsVideoCaptureDevice` -> shared-memory `I420` -> utility process `libaom-av1` + `Opus`) | Renderer Process (`FrameSinkVideoCaptureDevice` -> Blink `MediaStreamTrack` -> `MediaRecorder`) | Browser JPEG (`q=90`) -> Base64 JSON over CDP WebSocket -> Node.js `image2pipe` -> `ffmpeg -threads 1` |
 | **Max Verified Real-Time Throughput (M4 Max ProMotion)** | **`1080p @ 120.2 fps`**, **`1080p @ 89.4 fps`**, **`4K @ 60.2 fps`** | **`1080p @ 120 fps`**, **`4K @ 60 fps`** *(requires `videoBitsPerSecond >= 8M–15M`)* | Hard-capped at **`25 fps` container** / **`~12–21 unique fps`** (`35ms` `FrameThrottler` ACK cap) |

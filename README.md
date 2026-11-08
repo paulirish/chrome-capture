@@ -8,47 +8,86 @@ Instead of piping base64 JPEGs over a WebSocket into a single-threaded `ffmpeg` 
 
 ## Quick Start (CLI)
 
-Requires **Node 22+** (uses built-in `WebSocket`) and **Chrome / Chromium M153+**:
+Requires **Node 24+** (native `.ts` execution + built-in `WebSocket`) and **Chrome / Chromium M153+**:
 
 ```bash
-# Record 1280x720 @ 60fps for 4 seconds (with tab loopback audio)
-node capture-cdp.js https://example.com demo-60fps.mp4 4s
+# 1. Raw CDP (zero runtime dependencies)
+node capture-cdp.ts https://example.com demo-60fps.mp4 4s
 
 # Record 1080p @ 120fps on a 120Hz display (e.g. macOS ProMotion)
-node capture-cdp.js https://example.com demo-120fps.mp4 --fps=120 --width=1920 --height=1080 --duration=5s
+node capture-cdp.ts https://example.com demo-120fps.mp4 --fps=120 --width=1920 --height=1080 --duration=5s
 
 # Record 4K (3840x2160) @ 60fps
-node capture-cdp.js https://example.com demo-4k60.mp4 --fps=60 --width=3840 --height=2160 --duration=4s
+node capture-cdp.ts https://example.com demo-4k60.mp4 --fps=60 --width=3840 --height=2160 --duration=4s
 
 # Record the live page AND Chrome DevTools panels side-by-side in one tab
-node capture-cdp.js https://example.com devtools-split.mp4 5s --with-devtools
+node capture-cdp.ts https://example.com devtools-split.mp4 5s --with-devtools
+
+# 2. Puppeteer CLI
+node capture-pptr.ts https://example.com demo-pptr.mp4 4s
+
+# 3. Playwright CLI
+node capture-playwright.ts https://example.com demo-pw.mp4 4s
 ```
 
 ---
 
 ## Programmatic Usage (Playwright / Puppeteer / Raw CDP)
 
-[`CdpScreenRecorder`](./capture-cdp.js) wraps any object with `.send(method, params)` — so it works with **Playwright** (`context.newCDPSession(page)`), **Puppeteer** (`page.createCDPSession()`), or the included zero-dependency `connectCdpSession(wsUrl)`:
+Strongly typed against `devtools-protocol` (`Protocol.Page.StartScreenRecordingRequest`). You can use the framework-specific helpers ([`capture-playwright.ts`](./capture-playwright.ts), [`capture-pptr.ts`](./capture-pptr.ts)) or wrap any CDP client Directly with [`CdpScreenRecorder`](./capture-cdp.ts):
 
-```js
+### Playwright (`capture-playwright.ts`)
+
+```ts
 import {writeFile} from 'node:fs/promises';
-import {CdpScreenRecorder} from './capture-cdp.js';
+import {createPlaywrightRecorder} from './capture-playwright.ts';
 
-// Playwright: const client = await page.context().newCDPSession(page);
-// Puppeteer:  const client = await page.createCDPSession();
-const recorder = new CdpScreenRecorder(client);
-
-await recorder.start({
+const recorder = await createPlaywrightRecorder(page, {
   frameRate: 60,     // 60, 90, or 120
   maxWidth: 1920,
   maxHeight: 1080,
   audio: true,       // 48kHz stereo Opus tab loopback audio
 });
 
-// ... drive UI interactions or animations (survives cross-origin navigations!) ...
+// ... drive Playwright UI interactions (survives cross-origin navigations!) ...
 
 const mp4Buffer = await recorder.stop();
 await writeFile('recording.mp4', mp4Buffer);
+```
+
+### Puppeteer (`capture-pptr.ts`)
+
+```ts
+import {writeFile} from 'node:fs/promises';
+import {createPuppeteerRecorder} from './capture-pptr.ts';
+
+const recorder = await createPuppeteerRecorder(page, {
+  frameRate: 60,
+  maxWidth: 1920,
+  maxHeight: 1080,
+  audio: true,
+});
+
+// ... drive Puppeteer UI interactions ...
+
+const mp4Buffer = await recorder.stop();
+await writeFile('recording.mp4', mp4Buffer);
+```
+
+### Raw CDP (`capture-cdp.ts`)
+
+```ts
+import {writeFile} from 'node:fs/promises';
+import {CdpScreenRecorder, connectCdpSession} from './capture-cdp.ts';
+
+const session = await connectCdpSession(pageWebSocketDebuggerUrl);
+const recorder = new CdpScreenRecorder(session);
+
+await recorder.start({frameRate: 60, maxWidth: 1920, maxHeight: 1080, audio: true});
+// ...
+const mp4Buffer = await recorder.stop();
+await writeFile('recording.mp4', mp4Buffer);
+session.close();
 ```
 
 ---
@@ -70,7 +109,7 @@ Full architectural breakdown and benchmark tables are in **[`cdp-screen-recordin
 
 ### 2. Scaling on macOS ProMotion (`120Hz CVDisplayLink` + Apple Silicon M4 Max)
 
-Verified with a **16-bit per-frame `requestAnimationFrame` pixel barcode** ([`stress-test-barcode.py`](./stress-test-barcode.py)) to measure true unique rendered frames vs. container packet counts:
+Verified with a **16-bit per-frame `requestAnimationFrame` pixel barcode** ([`stress-test-barcode.ts`](./stress-test-barcode.ts)) to measure true unique rendered frames vs. container packet counts:
 
 | Test Case (Native ProMotion VSync) | Target FPS | In-Page `rAF` FPS | Container FPS | **True Unique Visual FPS** | `dPTS` P50 (`Stdev`) | Finalize Latency | `mpv` Drops (`display-resample`) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -90,7 +129,7 @@ Verified with a **16-bit per-frame `requestAnimationFrame` pixel barcode** ([`st
 ## Benchmark & Telemetry Suite
 
 * **[`cdp-screen-recording-benchmarks.md`](./cdp-screen-recording-benchmarks.md)** — Full writeup covering architecture, `VideoCaptureOracle` ~1s phase-lock vs. `rAF` barcode cadence, full-range Display P3 (`pc/iec61966-2-1/smpte432`) color metadata, packet-indexed `2 * target_fps` GOPs, VFR idle suspension, and `Page.startScreenRecording` vs. `getDisplayMedia` + `MediaRecorder`.
-* **[`stress-test-barcode.py`](./stress-test-barcode.py)** — Zero-dependency Python stress-test runner (`1080p@60/90/120`, `1440p@60`, `4K@30/60`) with 16-bit binary `rAF` barcode verification.
+* **[`stress-test-barcode.ts`](./stress-test-barcode.ts)** — TypeScript stress-test runner (`1080p@60/90/120`, `1440p@60`, `4K@30/60`) with a rich live telemetry HUD canvas and 16-bit binary `rAF` barcode verification.
 * **[`benchmarks/analyze_mp4.py`](./benchmarks/analyze_mp4.py)** — Per-packet `ffprobe` PTS/DTS + 16-bit `rAF` barcode correlator (`dPTS` percentiles/stdev, `dRAF` histograms, GOP keyframe indices, color tags).
 * **[`benchmarks/vfr_burst_test.py`](./benchmarks/vfr_burst_test.py)** — Static-idle → 120Hz burst → static-idle VFR & packet-indexed GOP wakeup test.
 * **[`benchmarks/compare_mediarecorder.mjs`](./benchmarks/compare_mediarecorder.mjs)** — Head-to-head `Page.startScreenRecording` vs. web-exposed `getDisplayMedia({preferCurrentTab: true})` + `MediaRecorder` benchmark runner.

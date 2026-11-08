@@ -8,22 +8,13 @@
 /**
  * Out-of-band tab video recording via CDP `Page.startScreenRecording` (shipped in Chrome M153).
  *
- * How this differs from `tab-recorder.js` + `capture-pptr.js`:
- * - `tab-recorder.js` uses web-exposed Blink APIs (`getDisplayMedia` + `MediaRecorder` +
- *   `MediaStreamTrackProcessor`) inside the renderer. It works in normal user sessions without
- *   CDP, lets you pick codecs (`vp9`, `vp8`, `avc1`), and exposes per-frame timestamps in JS,
- *   but dies if the recorded page reloads or navigates cross-process.
- * - `Page.startScreenRecording` runs in the browser process (`WebContentsVideoCaptureDevice` ->
- *   `content::protocol::MediaRecorder`) and encodes AV1 + Opus into MP4 inside a utility process
- *   (`devtools_media_encoding_server`), returning an `IO.StreamHandle`. It requires a privileged
- *   CDP connection, but survives navigations/reloads and needs no in-page JS, user activation,
- *   `--use-fake-ui-for-media-stream`, or download-folder plumbing.
+ * Runs in the browser process (`WebContentsVideoCaptureDevice` -> `content::protocol::MediaRecorder`)
+ * and encodes AV1 video + 48kHz stereo Opus audio into MP4 inside a utility process
+ * (`devtools_media_encoding_server`), returning an `IO.StreamHandle`.
  *
- * Recording a page + DevTools together in one WebContents:
- * - Pass `--with-devtools` on the CLI (or use `openInspectorWithScreencast()`): this opens
- *   `devtools://devtools/bundled/inspector.html?ws=<target>` (which loads DevTools' built-in
- *   `ScreencastApp` preview on the left and DevTools panels on the right inside a single tab)
- *   and runs `Page.startScreenRecording` on that `inspector.html` target.
+ * See also:
+ * - `./capture-pptr.ts` for Puppeteer integration (`page.createCDPSession()`)
+ * - `./capture-playwright.ts` for Playwright integration (`page.context().newCDPSession(page)`)
  */
 
 import {spawn} from 'node:child_process';
@@ -31,25 +22,84 @@ import {access, mkdtemp, readdir, rm, writeFile} from 'node:fs/promises';
 import {homedir, platform, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import type {Protocol} from 'devtools-protocol';
+import type {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js';
 
-/**
- * @typedef {object} CdpSessionLike
- * @property {(method: string, params?: Record<string, unknown>) => Promise<any>} send
- */
+export type ScreenRecordingOptions = Protocol.Page.StartScreenRecordingRequest;
 
-/**
- * @typedef {object} ScreenRecordingOptions
- * @property {boolean} [audio] Capture tab loopback audio (Opus 48kHz stereo).
- * @property {number} [maxWidth] Maximum frame width in pixels.
- * @property {number} [maxHeight] Maximum frame height in pixels.
- * @property {number} [frameRate] Target frame rate (default 60).
- */
+export interface CdpSessionLike {
+  send<K extends keyof ProtocolMapping.Commands>(
+    method: K,
+    ...params: ProtocolMapping.Commands[K]['paramsType']
+  ): Promise<ProtocolMapping.Commands[K]['returnType']>;
+}
+
+interface CdpRpcError {
+  code: number;
+  message: string;
+}
+
+interface CdpRpcMessage {
+  id?: number;
+  result?: ProtocolMapping.Commands[keyof ProtocolMapping.Commands]['returnType'];
+  error?: CdpRpcError;
+}
+
+interface CdpTargetInfo {
+  id: string;
+  type: string;
+  url: string;
+  webSocketDebuggerUrl: string;
+}
+
+function isRecord(val: object | null): val is Record<string, object | string | number | boolean | undefined> {
+  return typeof val === 'object' && val !== null;
+}
+
+function parseCdpRpcMessage(raw: string): CdpRpcMessage | null {
+  const parsed: object | null = JSON.parse(raw);
+  if (!isRecord(parsed)) return null;
+  const id = typeof parsed.id === 'number' ? parsed.id : undefined;
+  let error: CdpRpcError | undefined;
+  if (typeof parsed.error === 'object' && parsed.error !== null && isRecord(parsed.error)) {
+    const code = typeof parsed.error.code === 'number' ? parsed.error.code : -1;
+    const message = typeof parsed.error.message === 'string' ? parsed.error.message : 'CDP error';
+    error = {code, message};
+  }
+  const result = parsed.result as CdpRpcMessage['result'];
+  return {id, result, error};
+}
+
+function parseTargetList(raw: string): CdpTargetInfo[] {
+  const parsed: object | null = JSON.parse(raw);
+  if (!Array.isArray(parsed)) return [];
+  const targets: CdpTargetInfo[] = [];
+  for (const item of parsed) {
+    if (
+      typeof item === 'object' &&
+      item !== null &&
+      typeof item.id === 'string' &&
+      typeof item.type === 'string' &&
+      typeof item.url === 'string' &&
+      typeof item.webSocketDebuggerUrl === 'string'
+    ) {
+      targets.push({
+        id: item.id,
+        type: item.type,
+        url: item.url,
+        webSocketDebuggerUrl: item.webSocketDebuggerUrl,
+      });
+    }
+  }
+  return targets;
+}
 
 export class CdpScreenRecorder {
-  /** @param {CdpSessionLike} session Puppeteer CDPSession (`await page.createCDPSession()`) or raw CDP client */
-  constructor(session) {
+  session: CdpSessionLike;
+  streamHandle: Protocol.IO.StreamHandle | undefined;
+
+  constructor(session: CdpSessionLike) {
     this.session = session;
-    /** @type {string | undefined} */
     this.streamHandle = undefined;
   }
 
@@ -64,31 +114,28 @@ export class CdpScreenRecorder {
    *   macOS: switching to `BackToBackBeginFrameSource` spins in-page `rAF` at 1,600-9,800 fps,
    *   flooding the Viz GPU compositor command queue and starving `FrameSinkVideoCapturerImpl`
    *   readback down to 0.3-11.7 fps.
-   *
-   * @param {ScreenRecordingOptions} [options]
    */
-  async start(options = {}) {
-    const {stream} = await this.session.send('Page.startScreenRecording', {
+  async start(options: ScreenRecordingOptions = {}): Promise<Protocol.IO.StreamHandle> {
+    const request: Protocol.Page.StartScreenRecordingRequest = {
       frameRate: 60,
       ...options,
-    });
+    };
+    const {stream} = await this.session.send('Page.startScreenRecording', request);
     this.streamHandle = stream;
     return stream;
   }
 
   /**
    * Stops the active recording, drains the `IO.StreamHandle`, and returns the MP4 bytes.
-   * @return {Promise<Buffer>}
    */
-  async stop() {
+  async stop(): Promise<Buffer> {
     const {stream} = await this.session.send('Page.stopScreenRecording');
-    const handle = stream ?? this.streamHandle;
+    const handle = stream || this.streamHandle;
     if (!handle) {
       throw new Error('No active stream handle from Page.stopScreenRecording.');
     }
 
-    /** @type {Buffer[]} */
-    const chunks = [];
+    const chunks: Buffer[] = [];
     try {
       while (true) {
         const {data, base64Encoded, eof} = await this.session.send('IO.read', {handle});
@@ -106,24 +153,27 @@ export class CdpScreenRecorder {
 }
 
 /**
- * Minimal WebSocket-backed CDP session (matches Puppeteer's `session.send(method, params)`).
- * @param {string} wsUrl
- * @return {Promise<CdpSessionLike & {close: () => void}>}
+ * Minimal WebSocket-backed CDP session typed against `devtools-protocol`'s `ProtocolMapping.Commands`.
  */
-export async function connectCdpSession(wsUrl) {
+export async function connectCdpSession(wsUrl: string): Promise<CdpSessionLike & {close: () => void}> {
   const ws = new WebSocket(wsUrl);
-  await new Promise((resolve, reject) => {
-    ws.addEventListener('open', resolve, {once: true});
-    ws.addEventListener('error', reject, {once: true});
+  await new Promise<void>((resolve, reject) => {
+    ws.addEventListener('open', () => resolve(), {once: true});
+    ws.addEventListener('error', () => reject(new Error(`WebSocket connection failed: ${wsUrl}`)), {once: true});
   });
 
   let nextId = 1;
-  /** @type {Map<number, {resolve: (val: any) => void, reject: (err: Error) => void}>} */
-  const pending = new Map();
+  const pending = new Map<
+    number,
+    {
+      resolve: (val: CdpRpcMessage['result']) => void;
+      reject: (err: Error) => void;
+    }
+  >();
 
   ws.addEventListener('message', (event) => {
-    const msg = JSON.parse(String(event.data));
-    if (typeof msg.id !== 'number') return;
+    const msg = parseCdpRpcMessage(String(event.data));
+    if (!msg || typeof msg.id !== 'number') return;
     const entry = pending.get(msg.id);
     if (!entry) return;
     pending.delete(msg.id);
@@ -135,10 +185,17 @@ export async function connectCdpSession(wsUrl) {
   });
 
   return {
-    send(method, params = {}) {
+    send<K extends keyof ProtocolMapping.Commands>(
+      method: K,
+      ...args: ProtocolMapping.Commands[K]['paramsType']
+    ): Promise<ProtocolMapping.Commands[K]['returnType']> {
       const id = nextId++;
-      const {promise, resolve, reject} = Promise.withResolvers();
-      pending.set(id, {resolve, reject});
+      const params = args[0] ?? {};
+      const {promise, resolve, reject} = Promise.withResolvers<ProtocolMapping.Commands[K]['returnType']>();
+      pending.set(id, {
+        resolve: resolve as (val: CdpRpcMessage['result']) => void,
+        reject,
+      });
       ws.send(JSON.stringify({id, method, params}));
       return promise;
     },
@@ -149,10 +206,9 @@ export async function connectCdpSession(wsUrl) {
 }
 
 /**
- * Resolves a local Chrome 153+ executable (checks CHROME_PATH, Puppeteer cache, or platform candidates).
- * @return {Promise<string>}
+ * Resolves a local Chrome 153+ executable (checks CHROME_PATH, system paths, or Puppeteer cache).
  */
-async function findChromeBinary() {
+export async function findChromeBinary(): Promise<string> {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
 
   const candidates = platform() === 'darwin'
@@ -195,11 +251,8 @@ async function findChromeBinary() {
 
 /**
  * Parses duration from strings like '3000', '3000ms', '3s', '3', or numbers.
- * @param {string | number | undefined} val
- * @param {number} defaultMs
- * @return {number}
  */
-export function parseDuration(val, defaultMs = 3000) {
+export function parseDuration(val: string | number | undefined, defaultMs = 3000): number {
   if (val == null) return defaultMs;
   const str = String(val).trim();
   if (str.endsWith('ms')) return parseFloat(str);
@@ -209,35 +262,35 @@ export function parseDuration(val, defaultMs = 3000) {
   return num <= 30 ? num * 1000 : num;
 }
 
-async function cli() {
+async function cli(): Promise<void> {
   const args = process.argv.slice(2);
 
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: node capture-cdp.js [url] [output] [duration] [options]
+    console.log(`Usage: node capture-cdp.ts [url] [output] [duration] [options]
 
 Arguments:
-  url                    Target page URL (default: http://localhost:8080/ or https://example.com)
-  output                 Output MP4 file path (default: demo-60fps.mp4)
-  duration               Duration in ms or seconds (e.g. 3000, 3s, 5s) (default: 3000ms)
+  url                         Target page URL (default: http://localhost:8080/ or https://example.com)
+  output                      Output MP4 file path (default: demo-60fps.mp4)
+  duration                    Duration in ms or seconds (e.g. 3000, 3s, 5s) (default: 3000ms)
 
 Options:
-  --duration=<val>       Recording duration (e.g. 3000, 3s, 3000ms)
-  --fps=<num>            Target frame rate (default: 60)
-  --width=<pixels>       Viewport width (default: 1280)
-  --height=<pixels>      Viewport height (default: 720)
-  --warmup=<ms>          Warmup delay before recording starts (default: 1000ms)
-  --audio                Enable audio track recording (default)
-  --no-audio             Disable audio track recording
-  --headed               Run in headed mode (default on macOS)
-  --headless             Run in --headless=new mode (default on Linux)
-  --with-devtools        Open screencast + DevTools side-by-side in inspector.html
-  -h, --help             Show this help message
+  --duration=<val>            Recording duration (e.g. 3000, 3s, 3000ms)
+  --fps=<num>                 Target frame rate (default: 60)
+  --width=<pixels>            Viewport width (default: 1280)
+  --height=<pixels>           Viewport height (default: 720)
+  --warmup=<ms>               Warmup delay before recording starts (default: 1000ms)
+  --capture-area=<area>       'target' (tab viewport) or 'browserWindow' (default: target)
+  --audio                     Enable audio track recording (default)
+  --no-audio                  Disable audio track recording
+  --headed                    Run in headed mode (default on macOS)
+  --headless                  Run in --headless=new mode (default on Linux)
+  --with-devtools             Open screencast + DevTools side-by-side in inspector.html
+  -h, --help                  Show this help message
 `);
     return;
   }
 
-  /** @param {string} flag */
-  const getFlagVal = (flag) => {
+  const getFlagVal = (flag: string): string | undefined => {
     const exact = args.find(a => a.startsWith(flag + '='));
     if (exact) return exact.slice(flag.length + 1);
     const idx = args.indexOf(flag);
@@ -262,6 +315,9 @@ Options:
   const height = parseInt(getFlagVal('--height') ?? '720', 10);
   const frameRate = parseInt(getFlagVal('--fps') ?? getFlagVal('--frameRate') ?? '60', 10);
   const warmupMs = parseInt(getFlagVal('--warmup') ?? '1000', 10);
+  const rawArea = getFlagVal('--capture-area');
+  const captureArea: Protocol.Page.StartScreenRecordingRequest['captureArea'] =
+    rawArea === 'browserWindow' ? 'browserWindow' : 'target';
   const audio = args.includes('--audio') ? true : !args.includes('--no-audio');
   const headless = args.includes('--headless') || (!args.includes('--headed') && platform() !== 'darwin');
   const withDevTools = args.includes('--with-devtools');
@@ -291,8 +347,8 @@ Options:
   const chrome = spawn(chromePath, chromeArgs);
 
   try {
-    const browserWsUrl = await new Promise((resolve, reject) => {
-      chrome.stderr.on('data', (chunk) => {
+    const browserWsUrl = await new Promise<string>((resolve, reject) => {
+      chrome.stderr.on('data', (chunk: Buffer) => {
         const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(chunk.toString());
         if (match) resolve(match[1]);
       });
@@ -303,16 +359,13 @@ Options:
     const httpBase = browserWsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*/, '');
     await new Promise(r => setTimeout(r, 800));
 
-    /** @type {Array<{id: string, type: string, url: string, webSocketDebuggerUrl: string}>} */
-    const targets = await (await fetch(`${httpBase}/json/list`)).json();
+    const targets = parseTargetList(await (await fetch(`${httpBase}/json/list`)).text());
     const pageTarget = targets.find(t => t.type === 'page' && !t.url.startsWith('devtools://'));
     if (!pageTarget) throw new Error('No page target found.');
 
     let recordTargetWs = pageTarget.webSocketDebuggerUrl;
 
     if (withDevTools) {
-      // Open inspector.html?ws=<target> so a single WebContents shows the live screencast
-      // preview on the left and DevTools panels on the right.
       const wsHost = pageTarget.webSocketDebuggerUrl.replace(/^ws:\/\//, '');
       const inspectorUrl = `devtools://devtools/bundled/inspector.html?ws=${wsHost}`;
       const browserSession = await connectCdpSession(browserWsUrl);
@@ -320,8 +373,7 @@ Options:
       browserSession.close();
 
       await new Promise(r => setTimeout(r, 2000));
-      /** @type {Array<{id: string, webSocketDebuggerUrl: string}>} */
-      const updatedTargets = await (await fetch(`${httpBase}/json/list`)).json();
+      const updatedTargets = parseTargetList(await (await fetch(`${httpBase}/json/list`)).text());
       const inspectorTarget = updatedTargets.find(t => t.id === targetId);
       if (!inspectorTarget) throw new Error('Failed to find inspector.html target.');
       recordTargetWs = inspectorTarget.webSocketDebuggerUrl;
@@ -337,7 +389,7 @@ Options:
         mobile: false,
       });
     } catch {
-      // Ignore if unsupported on target
+      // Ignore if unsupported on target.
     }
 
     if (warmupMs > 0) {
@@ -350,6 +402,7 @@ Options:
       audio,
       maxWidth: width,
       maxHeight: height,
+      captureArea,
     });
 
     await new Promise(r => setTimeout(r, durationMs));
