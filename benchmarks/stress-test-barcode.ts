@@ -23,7 +23,6 @@
  *   node stress-test-barcode.ts --duration=3.0
  */
 
-import {spawnSync} from 'node:child_process';
 import {readFileSync, statSync} from 'node:fs';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {platform} from 'node:os';
@@ -33,10 +32,12 @@ import {parseArgs} from 'node:util';
 import type {Protocol} from 'devtools-protocol';
 import {
   CdpScreenRecorder,
+  type CdpSessionLike,
   connectCdpSession,
   findChromeBinary,
   launchChrome,
 } from '../src/index.ts';
+import {inspectFile} from './analyze-mp4.ts';
 
 export interface BarcodeMetrics {
   duration_sec: number;
@@ -59,23 +60,6 @@ export interface TestCase {
   height: number;
   fps: number;
   uncap: boolean;
-}
-
-interface FfprobeStream {
-  codec_name?: string;
-  width?: number;
-  height?: number;
-  duration?: string;
-}
-
-interface FfprobeFormat {
-  duration?: string;
-  size?: string;
-}
-
-interface FfprobeOutput {
-  streams?: FfprobeStream[];
-  format?: FfprobeFormat;
 }
 
 /**
@@ -126,95 +110,64 @@ export function decodeBarcodeScanline(rowPixels: Uint8Array, blockWidth = 24): n
 }
 
 /**
- * Decodes 16-bit binary pixel barcodes from the recorded MP4 using ffmpeg + ffprobe.
+ * Decodes 16-bit binary pixel barcodes from the recorded MP4 using `inspectFile` from `./analyze-mp4.ts`.
  */
 export function decodeBarcodes(videoPath: string): BarcodeMetrics {
-  const cropW = 18 * 24;
-  const cropH = 8;
-  const rawProc = spawnSync('ffmpeg', [
-    '-v', 'error',
-    '-i', videoPath,
-    '-vsync', '0',
-    '-vf', `crop=${cropW}:${cropH}:0:12,format=gray`,
-    '-f', 'rawvideo',
-    'pipe:1',
-  ], {maxBuffer: 500 * 1024 * 1024});
-
-  if (rawProc.error) {
-    throw new Error(`ffmpeg execution failed: ${rawProc.error.message}`);
-  }
-  if (rawProc.status !== 0) {
-    const errText = rawProc.stderr ? rawProc.stderr.toString('utf8') : `exit code ${rawProc.status}`;
-    throw new Error(`ffmpeg crop extraction failed: ${errText}`);
-  }
-
-  const raw = rawProc.stdout;
-  const stride = cropW * cropH;
-  const nFrames = Math.floor(raw.length / stride);
-
-  const probeProc = spawnSync('ffprobe', [
-    '-v', 'error',
-    '-select_streams', 'v:0',
-    '-show_entries', 'stream=codec_name,width,height,duration',
-    '-show_entries', 'format=duration,size',
-    '-of', 'json',
-    videoPath,
-  ], {encoding: 'utf8'});
-
-  if (probeProc.error) {
-    throw new Error(`ffprobe execution failed: ${probeProc.error.message}`);
-  }
-  if (probeProc.status !== 0) {
-    const errText = probeProc.stderr ? probeProc.stderr.toString() : `exit code ${probeProc.status}`;
-    throw new Error(`ffprobe stream inspection failed: ${errText}`);
-  }
-
-  const probe: FfprobeOutput = JSON.parse(probeProc.stdout || '{}');
-  const stream = (probe.streams && probe.streams[0]) || {};
-  const fmt = probe.format || {};
-  const dur = parseFloat(stream.duration || fmt.duration || '0.0');
-
-  let fileSizeBytes = 0;
-  if (fmt.size) {
-    fileSizeBytes = parseInt(fmt.size, 10);
-  } else {
-    try {
-      fileSizeBytes = statSync(videoPath).size;
-    } catch {
-      fileSizeBytes = 0;
-    }
-  }
-  const sizeKb = fileSizeBytes / 1024.0;
-
-  const barcodes = new Set<number>();
+  const result = inspectFile(videoPath, true);
   let dups = 0;
   let lastBarcode = -1;
   let validFrames = 0;
 
-  for (let i = 0; i < nFrames; i++) {
-    const fbuf = raw.subarray(i * stride, (i + 1) * stride);
-    const rowOffset = 4 * cropW;
-    const row = fbuf.subarray(rowOffset, rowOffset + cropW);
-    const val = decodeBarcodeScanline(row, 24);
-    if (val !== null) {
-      barcodes.add(val);
-      if (val === lastBarcode) {
-        dups++;
-      }
-      lastBarcode = val;
+  for (const t of result.timeline ?? []) {
+    if (t.barcode !== null) {
+      if (t.barcode === lastBarcode) dups++;
+      lastBarcode = t.barcode;
       validFrames++;
     }
   }
 
+  const dur = result.duration_s;
+  let fileSizeBytes = 0;
+  try {
+    fileSizeBytes = statSync(videoPath).size;
+  } catch {
+    fileSizeBytes = 0;
+  }
+
   return {
-    duration_sec: Math.round(dur * 100) / 100,
-    container_frames: nFrames,
-    container_fps: dur > 0 ? Math.round((nFrames / dur) * 10) / 10 : 0.0,
-    unique_frames: barcodes.size,
-    unique_visual_fps: dur > 0 ? Math.round((barcodes.size / dur) * 10) / 10 : 0.0,
+    duration_sec: dur,
+    container_frames: result.packets,
+    container_fps: dur > 0 ? Math.round((result.packets / dur) * 10) / 10 : 0.0,
+    unique_frames: result.unique_barcodes,
+    unique_visual_fps: dur > 0 ? Math.round((result.unique_barcodes / dur) * 10) / 10 : 0.0,
     duplicate_pct: validFrames > 0 ? Math.round((100.0 * dups / validFrames) * 10) / 10 : 0.0,
-    size_kb: Math.round(sizeKb * 10) / 10,
+    size_kb: Math.round((fileSizeBytes / 1024.0) * 10) / 10,
   };
+}
+
+export async function setupBarcodePage(
+  session: CdpSessionLike,
+  width: number,
+  height: number,
+  html: string,
+): Promise<void> {
+  await session.send('Page.enable');
+  await session.send('Runtime.enable');
+  await session.send('Emulation.setDeviceMetricsOverride', {
+    width,
+    height,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+
+  const frameTreeRes = await session.send('Page.getFrameTree');
+  const frameId = frameTreeRes.frameTree.frame.id;
+  await session.send('Page.setDocumentContent', {frameId, html});
+
+  await session.send('Runtime.evaluate', {
+    expression: 'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
+    awaitPromise: true,
+  });
 }
 
 export async function runCase(
@@ -242,27 +195,7 @@ export async function runCase(
     const pageSession = await connectCdpSession(launched.pageTargetWs);
     const {product: browserVer} = await pageSession.send('Browser.getVersion').catch(() => ({product: 'unknown'}));
 
-    await pageSession.send('Page.enable');
-    await pageSession.send('Runtime.enable');
-    await pageSession.send('Emulation.setDeviceMetricsOverride', {
-      width,
-      height,
-      deviceScaleFactor: 1,
-      mobile: false,
-    });
-
-    const frameTreeRes = await pageSession.send('Page.getFrameTree');
-    const frameId = frameTreeRes.frameTree.frame.id;
-    await pageSession.send('Page.setDocumentContent', {
-      frameId,
-      html: BARCODE_CANVAS_HTML,
-    });
-
-    // Deterministically wait for 2 rAF ticks so canvas renders before recording begins
-    await pageSession.send('Runtime.evaluate', {
-      expression: 'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
-      awaitPromise: true,
-    });
+    await setupBarcodePage(pageSession, width, height, BARCODE_CANVAS_HTML);
 
     const eval0 = await pageSession.send('Runtime.evaluate', {
       expression: 'window.__rafCount',

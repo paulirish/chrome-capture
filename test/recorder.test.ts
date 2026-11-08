@@ -10,8 +10,6 @@ import type {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js'
 import {
   CdpScreenRecorder,
   type CdpSessionLike,
-  createPlaywrightRecorder,
-  createPuppeteerRecorder,
   parseDuration,
   type PlaywrightPageLike,
   type PuppeteerPageLike,
@@ -22,6 +20,51 @@ import {
   BARCODE_CANVAS_HTML,
   decodeBarcodeScanline,
 } from '../benchmarks/stress-test-barcode.ts';
+
+function createMockSession(opts: {
+  streamId?: string;
+  payload?: string;
+  chunks?: Array<{data: string; base64Encoded: boolean; eof: boolean}>;
+  ioCloseError?: boolean;
+} = {}): CdpSessionLike & {
+  detach(): Promise<void>;
+  calls: Array<{method: string; params: object | undefined}>;
+  detached: number;
+} {
+  let readIdx = 0;
+  const mock = {
+    calls: [] as Array<{method: string; params: object | undefined}>,
+    detached: 0,
+    async send<K extends keyof ProtocolMapping.Commands>(
+      method: K,
+      ...params: ProtocolMapping.Commands[K]['paramsType']
+    ): Promise<ProtocolMapping.Commands[K]['returnType']> {
+      mock.calls.push({method, params: params[0] as object | undefined});
+      if (method === 'Page.startScreenRecording' || method === 'Page.stopScreenRecording') {
+        return {stream: opts.streamId ?? 'stream-mock'} as ProtocolMapping.Commands[K]['returnType'];
+      }
+      if (method === 'IO.read') {
+        if (opts.chunks) {
+          return opts.chunks[readIdx++] as ProtocolMapping.Commands[K]['returnType'];
+        }
+        return {
+          data: Buffer.from(opts.payload ?? 'mock-mp4').toString('base64'),
+          base64Encoded: true,
+          eof: true,
+        } as ProtocolMapping.Commands[K]['returnType'];
+      }
+      if (method === 'IO.close') {
+        if (opts.ioCloseError) throw new Error('IO.close failed');
+        return {} as ProtocolMapping.Commands[K]['returnType'];
+      }
+      return {} as ProtocolMapping.Commands[K]['returnType'];
+    },
+    async detach(): Promise<void> {
+      mock.detached++;
+    },
+  };
+  return mock;
+}
 
 describe('parseDuration', () => {
   it('parses milliseconds, seconds, and shorthand numbers', () => {
@@ -87,152 +130,40 @@ describe('decodeBarcodeScanline', () => {
 
 describe('CdpScreenRecorder', () => {
   it('starts Page.startScreenRecording at 60fps default and drains IO.read chunks on stop()', async () => {
-    const calls: Array<{method: string; params: object | undefined}> = [];
-    const chunks = [
-      {data: Buffer.from('ftypmp42').toString('base64'), base64Encoded: true, eof: false},
-      {data: Buffer.from('-av01-opus').toString('base64'), base64Encoded: true, eof: true},
-    ];
-    let readIdx = 0;
-
-    const fakeSession: CdpSessionLike = {
-      async send<K extends keyof ProtocolMapping.Commands>(
-        method: K,
-        ...params: ProtocolMapping.Commands[K]['paramsType']
-      ): Promise<ProtocolMapping.Commands[K]['returnType']> {
-        calls.push({method, params: params[0] as object | undefined});
-        if (method === 'Page.startScreenRecording') {
-          return {stream: 'stream-42'} as ProtocolMapping.Commands[K]['returnType'];
-        }
-        if (method === 'Page.stopScreenRecording') {
-          return {stream: 'stream-42'} as ProtocolMapping.Commands[K]['returnType'];
-        }
-        if (method === 'IO.read') {
-          return chunks[readIdx++] as ProtocolMapping.Commands[K]['returnType'];
-        }
-        if (method === 'IO.close') {
-          return {} as ProtocolMapping.Commands[K]['returnType'];
-        }
-        throw new Error(`Unexpected CDP call: ${String(method)}`);
-      },
-    };
+    const fakeSession = createMockSession({
+      streamId: 'stream-42',
+      chunks: [
+        {data: Buffer.from('ftypmp42').toString('base64'), base64Encoded: true, eof: false},
+        {data: Buffer.from('-av01-opus').toString('base64'), base64Encoded: true, eof: true},
+      ],
+    });
 
     const recorder = new CdpScreenRecorder(fakeSession);
     const handle = await recorder.start({maxWidth: 1920, maxHeight: 1080, audio: true});
     assert.equal(handle, 'stream-42');
-    assert.deepEqual(calls[0], {
+    assert.deepEqual(fakeSession.calls[0], {
       method: 'Page.startScreenRecording',
       params: {frameRate: 60, maxWidth: 1920, maxHeight: 1080, audio: true},
     });
 
     const mp4 = await recorder.stop();
     assert.equal(mp4.toString('utf8'), 'ftypmp42-av01-opus');
-    assert.equal(calls.at(-1)?.method, 'IO.close');
+    assert.equal(fakeSession.calls.at(-1)?.method, 'IO.close');
   });
 
   it('safely handles IO.close failure without masking errors during stop()', async () => {
-    const fakeSession: CdpSessionLike = {
-      async send<K extends keyof ProtocolMapping.Commands>(
-        method: K,
-        ..._params: ProtocolMapping.Commands[K]['paramsType']
-      ): Promise<ProtocolMapping.Commands[K]['returnType']> {
-        if (method === 'Page.startScreenRecording' || method === 'Page.stopScreenRecording') {
-          return {stream: 'stream-err'} as ProtocolMapping.Commands[K]['returnType'];
-        }
-        if (method === 'IO.read') {
-          return {
-            data: Buffer.from('chunk').toString('base64'),
-            base64Encoded: true,
-            eof: true,
-          } as ProtocolMapping.Commands[K]['returnType'];
-        }
-        if (method === 'IO.close') {
-          throw new Error('IO.close failed');
-        }
-        throw new Error(`Unexpected CDP call: ${String(method)}`);
-      },
-    };
-
-    const recorder = new CdpScreenRecorder(fakeSession);
+    const recorder = new CdpScreenRecorder(createMockSession({payload: 'chunk', ioCloseError: true}));
     await recorder.start();
     const mp4 = await recorder.stop();
     assert.equal(mp4.toString('utf8'), 'chunk');
   });
-
-  it('integrates with Puppeteer and Playwright CDPSession wrappers and detaches on stop()', async () => {
-    let detached = 0;
-    const makeFakeCdpSession = () => ({
-      async send<K extends keyof ProtocolMapping.Commands>(
-        method: K,
-        ..._params: ProtocolMapping.Commands[K]['paramsType']
-      ): Promise<ProtocolMapping.Commands[K]['returnType']> {
-        if (method === 'Page.startScreenRecording' || method === 'Page.stopScreenRecording') {
-          return {stream: 'stream-99'} as ProtocolMapping.Commands[K]['returnType'];
-        }
-        if (method === 'IO.read') {
-          return {
-            data: Buffer.from('mp4-bytes').toString('base64'),
-            base64Encoded: true,
-            eof: true,
-          } as ProtocolMapping.Commands[K]['returnType'];
-        }
-        return {} as ProtocolMapping.Commands[K]['returnType'];
-      },
-      async detach(): Promise<void> {
-        detached++;
-      },
-    });
-
-    const fakePptrPage: PuppeteerPageLike = {
-      createCDPSession: async () => makeFakeCdpSession(),
-    };
-
-    const pptrRec = await createPuppeteerRecorder(fakePptrPage, {frameRate: 120});
-    const pptrBuf = await pptrRec.stop();
-    assert.equal(pptrBuf.toString('utf8'), 'mp4-bytes');
-    assert.equal(detached, 1);
-
-    const fakePwPage: PlaywrightPageLike = {
-      context: () => ({
-        newCDPSession: async () => makeFakeCdpSession(),
-      }),
-    };
-
-    const pwRec = await createPlaywrightRecorder(fakePwPage, {frameRate: 60});
-    const pwBuf = await pwRec.stop();
-    assert.equal(pwBuf.toString('utf8'), 'mp4-bytes');
-    assert.equal(detached, 2);
-  });
 });
 
 describe('startRecording & asyncDispose', () => {
-  it('supports universal target recording, idempotent stop, and Symbol.asyncDispose', async () => {
-    let detached = 0;
-    const makeSession = () => ({
-      async send<K extends keyof ProtocolMapping.Commands>(
-        method: K,
-        ..._params: ProtocolMapping.Commands[K]['paramsType']
-      ): Promise<ProtocolMapping.Commands[K]['returnType']> {
-        if (method === 'Page.startScreenRecording' || method === 'Page.stopScreenRecording') {
-          return {stream: 'stream-universal'} as ProtocolMapping.Commands[K]['returnType'];
-        }
-        if (method === 'IO.read') {
-          return {
-            data: Buffer.from('universal-mp4').toString('base64'),
-            base64Encoded: true,
-            eof: true,
-          } as ProtocolMapping.Commands[K]['returnType'];
-        }
-        return {} as ProtocolMapping.Commands[K]['returnType'];
-      },
-      async detach(): Promise<void> {
-        detached++;
-      },
-    });
-
+  it('supports universal target recording (Playwright, Puppeteer, CDP), idempotent stop, and Symbol.asyncDispose', async () => {
+    const pwSession = createMockSession({payload: 'universal-mp4'});
     const pwPage: PlaywrightPageLike = {
-      context: () => ({
-        newCDPSession: async () => makeSession(),
-      }),
+      context: () => ({newCDPSession: async () => pwSession}),
     };
 
     let resultBuf: Buffer | undefined;
@@ -240,42 +171,27 @@ describe('startRecording & asyncDispose', () => {
       await using rec = await startRecording(pwPage, {frameRate: 60});
       const firstStop = await rec.stop();
       assert.equal(firstStop.toString('utf8'), 'universal-mp4');
-      const secondStop = await rec.stop(); // Idempotent check
+      const secondStop = await rec.stop();
       assert.equal(secondStop.toString('utf8'), 'universal-mp4');
       resultBuf = secondStop;
     }
-    // Exiting await using block triggered [Symbol.asyncDispose]() safely
     assert.equal(resultBuf.toString('utf8'), 'universal-mp4');
-    assert.equal(detached, 1);
+    assert.equal(pwSession.detached, 1);
+
+    const pptrSession = createMockSession({payload: 'pptr-mp4'});
+    const pptrPage: PuppeteerPageLike = {
+      createCDPSession: async () => pptrSession,
+    };
+    const pptrRec = await startRecording(pptrPage, {frameRate: 120});
+    assert.equal((await pptrRec.stop()).toString('utf8'), 'pptr-mp4');
+    assert.equal(pptrSession.detached, 1);
   });
 });
 
 describe('screenRecordingFixture', () => {
   it('manages fixture lifecycle and attaches recording to testInfo', async () => {
-    const makeSession = () => ({
-      async send<K extends keyof ProtocolMapping.Commands>(
-        method: K,
-        ..._params: ProtocolMapping.Commands[K]['paramsType']
-      ): Promise<ProtocolMapping.Commands[K]['returnType']> {
-        if (method === 'Page.startScreenRecording' || method === 'Page.stopScreenRecording') {
-          return {stream: 'stream-fixture'} as ProtocolMapping.Commands[K]['returnType'];
-        }
-        if (method === 'IO.read') {
-          return {
-            data: Buffer.from('fixture-mp4').toString('base64'),
-            base64Encoded: true,
-            eof: true,
-          } as ProtocolMapping.Commands[K]['returnType'];
-        }
-        return {} as ProtocolMapping.Commands[K]['returnType'];
-      },
-      async detach(): Promise<void> {},
-    });
-
     const pwPage: PlaywrightPageLike = {
-      context: () => ({
-        newCDPSession: async () => makeSession(),
-      }),
+      context: () => ({newCDPSession: async () => createMockSession({payload: 'fixture-mp4'})}),
     };
 
     const attachments: Array<{name: string; path?: string; contentType?: string}> = [];

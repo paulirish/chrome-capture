@@ -15,13 +15,4 @@
  *   const mp4 = await recording.stop('out.mp4');
  */
 
-export {
-  createPuppeteerRecorder,
-  findChromeBinary,
-  parseDuration,
-  startRecording,
-  type ActiveRecording,
-  type PuppeteerPageLike,
-  type RecordingTarget,
-  type ScreenRecordingOptions,
-} from './index.ts';
+export * from './index.ts';

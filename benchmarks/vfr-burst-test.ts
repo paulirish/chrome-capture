@@ -16,7 +16,6 @@
  *   node benchmarks/vfr-burst-test.ts --headless --chrome="/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"
  */
 
-import {spawnSync} from 'node:child_process';
 import {statSync} from 'node:fs';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -28,7 +27,8 @@ import {
   findChromeBinary,
   launchChrome,
 } from '../src/index.ts';
-import {decodeBarcodeScanline} from './stress-test-barcode.ts';
+import {inspectFile} from './analyze-mp4.ts';
+import {setupBarcodePage} from './stress-test-barcode.ts';
 
 const BURST_HTML = `<!DOCTYPE html>
 <html>
@@ -139,12 +139,6 @@ export interface BurstSummary {
   rows: BurstPacketRow[];
 }
 
-interface ProbePacket {
-  pts_time?: string;
-  size?: string;
-  flags?: string;
-}
-
 export async function recordBurst(
   chromeBin: string,
   headless: boolean,
@@ -168,28 +162,7 @@ export async function recordBurst(
 
   try {
     const session = await connectCdpSession(launched.pageTargetWs);
-
-    await session.send('Page.enable');
-    await session.send('Runtime.enable');
-    await session.send('Emulation.setDeviceMetricsOverride', {
-      width,
-      height,
-      deviceScaleFactor: 1,
-      mobile: false,
-    });
-
-    const frameTree = await session.send('Page.getFrameTree');
-    const frameId = frameTree.frameTree.frame.id;
-    await session.send('Page.setDocumentContent', {
-      frameId,
-      html: BURST_HTML,
-    });
-
-    // Wait 2 rAF ticks for canvas initialization
-    await session.send('Runtime.evaluate', {
-      expression: 'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
-      awaitPromise: true,
-    });
+    await setupBarcodePage(session, width, height, BURST_HTML);
 
     const t0 = performance.now();
     const recorder = new CdpScreenRecorder(session);
@@ -225,66 +198,15 @@ export async function recordBurst(
 
     await writeFile(outMp4, mp4Bytes);
 
-    const probeProc = spawnSync('ffprobe', [
-      '-v', 'error',
-      '-select_streams', 'v:0',
-      '-show_packets',
-      '-show_entries', 'packet=pts_time,size,flags',
-      '-of', 'json',
-      outMp4,
-    ], {encoding: 'utf8'});
-
-    if (probeProc.error || probeProc.status !== 0) {
-      throw new Error(`ffprobe failed: ${probeProc.stderr ?? probeProc.error?.message}`);
-    }
-
-    const probeData = JSON.parse(probeProc.stdout || '{}') as {packets?: ProbePacket[]};
-    const packets = probeData.packets ?? [];
-
-    const cropW = 18 * 24;
-    const cropH = 8;
-    const rawProc = spawnSync('ffmpeg', [
-      '-v', 'error',
-      '-i', outMp4,
-      '-vsync', '0',
-      '-vf', `crop=${cropW}:${cropH}:0:12,format=gray`,
-      '-f', 'rawvideo',
-      'pipe:1',
-    ], {maxBuffer: 500 * 1024 * 1024});
-
-    if (rawProc.error || rawProc.status !== 0) {
-      throw new Error(`ffmpeg crop extraction failed: ${rawProc.stderr?.toString() ?? rawProc.error?.message}`);
-    }
-
-    const raw = rawProc.stdout;
-    const stride = cropW * cropH;
-    const rows: BurstPacketRow[] = [];
-
-    for (let i = 0; i < packets.length; i++) {
-      const p = packets[i];
-      let bval: number | null = null;
-      if (i * stride < raw.length) {
-        const fbuf = raw.subarray(i * stride, (i + 1) * stride);
-        const rowOffset = 4 * cropW;
-        const row = fbuf.subarray(rowOffset, rowOffset + cropW);
-        bval = decodeBarcodeScanline(row, 24);
-      }
-
-      const prevPts = i > 0 && packets[i - 1].pts_time ? parseFloat(packets[i - 1].pts_time as string) * 1000 : 0.0;
-      const ptsMs = p.pts_time ? parseFloat(p.pts_time) * 1000 : 0.0;
-      const dptsMs = i > 0 ? Math.round((ptsMs - prevPts) * 100) / 100 : 0.0;
-      const sizeKb = Math.round((parseInt(p.size ?? '0', 10) / 1024) * 100) / 100;
-      const key = Boolean(p.flags?.includes('K'));
-
-      rows.push({
-        idx: i,
-        pts_ms: Math.round(ptsMs * 100) / 100,
-        dpts_ms: dptsMs,
-        size_kb: sizeKb,
-        key,
-        barcode: bval,
-      });
-    }
+    const inspection = inspectFile(outMp4, true);
+    const rows: BurstPacketRow[] = (inspection.timeline ?? []).map((t) => ({
+      idx: t.idx,
+      pts_ms: t.pts_ms,
+      dpts_ms: t.dpts_ms,
+      size_kb: Math.round((t.size_b / 1024) * 100) / 100,
+      key: t.key,
+      barcode: t.barcode,
+    }));
 
     const sizeBytes = statSync(outMp4).size;
     const sizeKb = Math.round((sizeBytes / 1024) * 10) / 10;

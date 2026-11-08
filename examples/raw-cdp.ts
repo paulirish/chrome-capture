@@ -11,11 +11,10 @@
  *   node examples/raw-cdp.ts
  */
 
-import {writeFile} from 'node:fs/promises';
 import {
-  CdpScreenRecorder,
   connectCdpSession,
   launchChrome,
+  startRecording,
 } from '../src/index.ts';
 
 const chrome = await launchChrome({
@@ -27,18 +26,21 @@ const chrome = await launchChrome({
 
 try {
   const session = await connectCdpSession(chrome.pageTargetWs);
-  const recorder = new CdpScreenRecorder(session);
 
   console.log('[*] Starting 60fps CDP screen recording...');
-  await recorder.start({frameRate: 60, maxWidth: 1280, maxHeight: 720, audio: true});
+  await using recording = await startRecording(session, {
+    frameRate: 60,
+    maxWidth: 1280,
+    maxHeight: 720,
+    audio: true,
+    outputPath: 'raw-cdp-demo.mp4',
+  });
 
   await new Promise(r => setTimeout(r, 3000));
 
-  const mp4Buffer = await recorder.stop();
+  const mp4 = await recording.stop();
+  console.log(`[+] Saved raw-cdp-demo.mp4 (${mp4.byteLength.toLocaleString()} bytes)`);
   session.close();
-
-  await writeFile('raw-cdp-demo.mp4', mp4Buffer);
-  console.log(`[+] Saved raw-cdp-demo.mp4 (${mp4Buffer.byteLength.toLocaleString()} bytes)`);
 } finally {
   await chrome.close();
 }

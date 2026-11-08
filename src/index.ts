@@ -51,17 +51,6 @@ export interface LaunchedChrome {
   close: () => Promise<void>;
 }
 
-interface CdpRpcError {
-  code: number;
-  message: string;
-}
-
-interface CdpRpcMessage {
-  id?: number;
-  result?: ProtocolMapping.Commands[keyof ProtocolMapping.Commands]['returnType'];
-  error?: CdpRpcError;
-}
-
 export class CdpScreenRecorder {
   session: CdpSessionLike;
   streamHandle: Protocol.IO.StreamHandle | undefined;
@@ -127,74 +116,57 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
   const ws = new WebSocket(wsUrl);
 
   await new Promise<void>((resolve, reject) => {
-    let timer: NodeJS.Timeout | undefined;
-    if (connectTimeoutMs > 0) {
-      timer = setTimeout(() => {
-        try {
-          ws.close();
-        } catch {
-          // Ignore
-        }
-        reject(new Error(`WebSocket connection timed out after ${connectTimeoutMs}ms: ${wsUrl}`));
-      }, connectTimeoutMs);
-    }
+    const timer = connectTimeoutMs > 0
+      ? setTimeout(() => {
+          try {
+            ws.close();
+          } catch {
+            // Ignore
+          }
+          reject(new Error(`WebSocket connection timed out after ${connectTimeoutMs}ms: ${wsUrl}`));
+        }, connectTimeoutMs)
+      : undefined;
 
-    const cleanup = () => {
-      if (timer) clearTimeout(timer);
-      ws.removeEventListener('open', onOpen);
-      ws.removeEventListener('error', onError);
-    };
-
-    const onOpen = () => {
-      cleanup();
+    ws.addEventListener('open', () => {
+      clearTimeout(timer);
       resolve();
-    };
+    }, {once: true});
 
-    const onError = () => {
-      cleanup();
+    ws.addEventListener('error', () => {
+      clearTimeout(timer);
       reject(new Error(`WebSocket connection failed: ${wsUrl}`));
-    };
-
-    ws.addEventListener('open', onOpen);
-    ws.addEventListener('error', onError);
+    }, {once: true});
   });
 
+  type CommandReturn = ProtocolMapping.Commands[keyof ProtocolMapping.Commands]['returnType'];
   let nextId = 1;
   let isClosed = false;
-  const pending = new Map<
-    number,
-    {
-      resolve: (val: CdpRpcMessage['result']) => void;
-      reject: (err: Error) => void;
-    }
-  >();
+  const pending = new Map<number, {resolve: (val: CommandReturn) => void; reject: (err: Error) => void}>();
 
   const rejectAllPending = (err: Error) => {
     isClosed = true;
-    for (const entry of pending.values()) {
-      entry.reject(err);
-    }
+    for (const entry of pending.values()) entry.reject(err);
     pending.clear();
   };
 
-  ws.addEventListener('close', () => {
-    rejectAllPending(new Error(`WebSocket connection closed: ${wsUrl}`));
-  });
-
-  ws.addEventListener('error', () => {
-    rejectAllPending(new Error(`WebSocket error on connection: ${wsUrl}`));
-  });
+  ws.addEventListener('close', () => rejectAllPending(new Error(`WebSocket connection closed: ${wsUrl}`)));
+  ws.addEventListener('error', () => rejectAllPending(new Error(`WebSocket error on connection: ${wsUrl}`)));
 
   ws.addEventListener('message', (event) => {
-    const msg = parseCdpRpcMessage(String(event.data));
-    if (!msg || typeof msg.id !== 'number') return;
-    const entry = pending.get(msg.id);
-    if (!entry) return;
-    pending.delete(msg.id);
-    if (msg.error) {
-      entry.reject(new Error(`${msg.error.message} (${msg.error.code})`));
-    } else {
-      entry.resolve(msg.result);
+    try {
+      const msg = JSON.parse(String(event.data)) as {
+        id?: number;
+        result?: CommandReturn;
+        error?: {code: number; message: string};
+      };
+      if (!msg || typeof msg.id !== 'number') return;
+      const entry = pending.get(msg.id);
+      if (!entry) return;
+      pending.delete(msg.id);
+      if (msg.error) entry.reject(new Error(`${msg.error.message} (${msg.error.code})`));
+      else entry.resolve(msg.result as CommandReturn);
+    } catch {
+      // Ignore malformed JSON frames
     }
   });
 
@@ -210,7 +182,7 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
       const params = args[0] ?? {};
       const {promise, resolve, reject} = Promise.withResolvers<ProtocolMapping.Commands[K]['returnType']>();
       pending.set(id, {
-        resolve: resolve as (val: CdpRpcMessage['result']) => void,
+        resolve: resolve as (val: CommandReturn) => void,
         reject,
       });
       try {
@@ -231,20 +203,6 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
       rejectAllPending(new Error(`WebSocket closed by client: ${wsUrl}`));
     },
   };
-}
-
-function parseCdpRpcMessage(text: string): CdpRpcMessage | null {
-  try {
-    const parsed = JSON.parse(text) as {
-      id?: number;
-      result?: ProtocolMapping.Commands[keyof ProtocolMapping.Commands]['returnType'];
-      error?: CdpRpcError;
-    };
-    if (typeof parsed !== 'object' || parsed === null) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -501,60 +459,6 @@ export interface ActiveRecording {
   [Symbol.asyncDispose]: () => Promise<void>;
 }
 
-/**
- * Attaches a `CdpScreenRecorder` to a Playwright `Page` via `page.context().newCDPSession(page)`.
- */
-export async function createPlaywrightRecorder(
-  page: PlaywrightPage | PlaywrightPageLike,
-  options: ScreenRecordingOptions = {},
-): Promise<{
-  recorder: CdpScreenRecorder;
-  stop: () => Promise<Buffer>;
-}> {
-  const cdpSession = await (page as {
-    context(): {
-      newCDPSession(page: PlaywrightPage | PlaywrightPageLike): Promise<CdpSessionLike & {detach(): Promise<void>}>;
-    };
-  }).context().newCDPSession(page);
-  const recorder = new CdpScreenRecorder(cdpSession);
-  await recorder.start(options);
-  return {
-    recorder,
-    async stop(): Promise<Buffer> {
-      try {
-        return await recorder.stop();
-      } finally {
-        await cdpSession.detach().catch(() => {});
-      }
-    },
-  };
-}
-
-/**
- * Attaches a `CdpScreenRecorder` to a Puppeteer `Page` via `page.createCDPSession()`.
- */
-export async function createPuppeteerRecorder(
-  page: PuppeteerPage | PuppeteerPageLike,
-  options: ScreenRecordingOptions = {},
-): Promise<{
-  recorder: CdpScreenRecorder;
-  stop: () => Promise<Buffer>;
-}> {
-  const cdpSession = await (page as PuppeteerPageLike).createCDPSession();
-  const recorder = new CdpScreenRecorder(cdpSession);
-  await recorder.start(options);
-  return {
-    recorder,
-    async stop(): Promise<Buffer> {
-      try {
-        return await recorder.stop();
-      } finally {
-        await cdpSession.detach().catch(() => {});
-      }
-    },
-  };
-}
-
 export type RecordingTarget =
   | PlaywrightPage
   | PlaywrightPageLike
@@ -573,17 +477,16 @@ export async function startRecording(
   let session: CdpSessionLike;
   let detachSession: (() => Promise<void>) | undefined;
 
-  if (typeof target === 'object' && target !== null && 'context' in target && typeof (target as {context: () => {newCDPSession?: () => Promise<CdpSessionLike & {detach(): Promise<void>}>}}).context === 'function') {
+  if (typeof target === 'object' && target !== null && 'context' in target && typeof target.context === 'function') {
     const pwPage = target as PlaywrightPageLike;
     const cdpSession = await pwPage.context().newCDPSession(pwPage);
     session = cdpSession;
     detachSession = () => cdpSession.detach().catch(() => {});
-  } else if (typeof target === 'object' && target !== null && 'createCDPSession' in target && typeof (target as {createCDPSession: () => Promise<CdpSessionLike & {detach(): Promise<void>}>}).createCDPSession === 'function') {
-    const pptrPage = target as PuppeteerPageLike;
-    const cdpSession = await pptrPage.createCDPSession();
+  } else if (typeof target === 'object' && target !== null && 'createCDPSession' in target && typeof target.createCDPSession === 'function') {
+    const cdpSession = await (target as PuppeteerPageLike).createCDPSession();
     session = cdpSession;
     detachSession = () => cdpSession.detach().catch(() => {});
-  } else if (typeof target === 'object' && target !== null && 'send' in target && typeof (target as CdpSessionLike).send === 'function') {
+  } else if (typeof target === 'object' && target !== null && 'send' in target && typeof target.send === 'function') {
     session = target as CdpSessionLike;
   } else {
     throw new Error('Unsupported recording target: must be a Playwright Page, Puppeteer Page, or CDP session.');
@@ -592,45 +495,16 @@ export async function startRecording(
   const recorder = new CdpScreenRecorder(session);
   await recorder.start(options);
 
-  let cachedBuffer: Buffer | undefined;
-  let stopped = false;
   let stopPromise: Promise<Buffer> | undefined;
-
   const stop = async (outPath?: string): Promise<Buffer> => {
-    if (cachedBuffer) {
-      if (outPath) {
-        await mkdir(dirname(outPath), {recursive: true});
-        await writeFile(outPath, cachedBuffer);
-      }
-      return cachedBuffer;
+    stopPromise ??= recorder.stop().finally(() => detachSession?.());
+    const buf = await stopPromise;
+    const effectiveOutPath = outPath ?? options.outputPath;
+    if (effectiveOutPath) {
+      await mkdir(dirname(effectiveOutPath), {recursive: true});
+      await writeFile(effectiveOutPath, buf);
     }
-
-    if (stopPromise) {
-      return stopPromise;
-    }
-
-    stopPromise = (async () => {
-      try {
-        if (!stopped) {
-          stopped = true;
-          cachedBuffer = await recorder.stop();
-        }
-      } finally {
-        if (detachSession) {
-          await detachSession();
-        }
-      }
-
-      const effectiveOutPath = outPath ?? options.outputPath;
-      if (effectiveOutPath && cachedBuffer) {
-        await mkdir(dirname(effectiveOutPath), {recursive: true});
-        await writeFile(effectiveOutPath, cachedBuffer);
-      }
-
-      return cachedBuffer ?? Buffer.alloc(0);
-    })();
-
-    return stopPromise;
+    return buf;
   };
 
   return {

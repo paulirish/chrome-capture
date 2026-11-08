@@ -25,26 +25,13 @@
 
 import type {Page} from 'playwright-core';
 import {
-  createPlaywrightRecorder,
-  findChromeBinary,
-  parseDuration,
   startRecording,
   type ActiveRecording,
   type PlaywrightPageLike,
-  type RecordingTarget,
   type ScreenRecordingOptions,
 } from './index.ts';
 
-export {
-  createPlaywrightRecorder,
-  findChromeBinary,
-  parseDuration,
-  startRecording,
-  type ActiveRecording,
-  type PlaywrightPageLike,
-  type RecordingTarget,
-  type ScreenRecordingOptions,
-};
+export * from './index.ts';
 
 export interface PlaywrightFixtureTestInfoLike {
   outputPath(...pathSegments: string[]): string;
