@@ -102,6 +102,17 @@ Running the same 9-case matrix with `node benchmarks/stress-test-barcode.ts --he
 * **Metal GPU acceleration remains active in `--headless=new` on macOS**: `1080p@60`, `1440p@60`, and **`4K (3840x2160) @ 60fps`** all sustain **`60.0–60.3` true unique visual fps** with `0.4%` duplicates in `--headless=new` (without opening a visible browser window).
 * **`--headless=new` caps `BeginFrame` (`rAF`) at `60Hz`**: Without an on-screen `NSWindow` bound to the display's `120Hz` ProMotion `CVDisplayLink`, headless Chromium drives `BeginFrame` from a synthetic `60Hz` timer (`In-Page rAF FPS = 60.0`), capping `90fps` and `120fps` captures at `60.4` unique visual fps. Use `--headful` when recording at `> 60fps` (`90fps` / `120fps`).
 
+### C. Real-World 3D WebGL2 + Web Audio Showcase (`examples/capture-demos.ts`, M4 Max `--headful`)
+
+Recorded at `1920x1080` (`deviceScaleFactor: 1`) with 48kHz stereo Opus audio on two production Three.js / WebGL2 scenes ([`senna-800kg`](https://sam1983aing.github.io/senna-800kg/) — 364k-vertex Draco McLaren Senna, 56 CFD streamlines, 276-mesh explosion, procedural flat-plane V8 synth; and [`ticket-tear`](https://sam1983aing.github.io/ticket-tear/) — 900-particle / 2,540-spring Verlet paper physics, holographic GLSL foil, and procedural fiber-rip synthesis):
+
+| Demo (`1920x1080`, `deviceScaleFactor: 1`) | Target FPS | In-Page `rAF` FPS | MP4 Container FPS (`av1`) | Frames (`rAF` / MP4) | Frame $\Delta t$ (`p50` / `p95`) | Audio (`48kHz` stereo) | Bitrate | File Size |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Senna 800KG** (`12.0s`, 6-act spline) | `90` | **`118.3 fps`** | **`89.3 fps`** | `1,421 / 1,075` | `8.3ms / 9.2ms` | `opus` (`597` pkts) | `12.95 Mbps` | `18.58 MB` |
+| **Ticket Tear** (`10.0s`, Verlet tear) | `90` | **`117.9 fps`** | **`87.2 fps`** | `1,179 / 877` | `8.3ms / 9.2ms` | `opus` (`501` pkts) | `12.20 Mbps` | `14.64 MB` |
+| **Senna 800KG** (`12.0s`, 6-act spline) | **`120`** | **`119.9 fps`** | **`120.2 fps`** | **`1,440 / 1,441`** | `8.3ms / 9.2ms` | `opus` (`597` pkts) | `16.39 Mbps` | `23.43 MB` |
+| **Ticket Tear** (`10.0s`, Verlet tear) | **`120`** | **`120.1 fps`** | **`112.3 fps`** | `1,201 / 1,130` | `8.3ms / 9.1ms` | `opus` (`501` pkts) | `14.86 Mbps` | `17.82 MB` |
+
 ---
 
 ## 5. Scaling Results: Headless Linux Without Hardware GPU (`--headless=new --disable-gpu`)
