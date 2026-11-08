@@ -192,12 +192,9 @@ export function inspectFile(path: string, includeTimeline = false): InspectionRe
   });
 
   const deltasMs: number[] = [];
-  for (let i = 1; i < ptsTimes.length; i++) {
-    deltasMs.push((ptsTimes[i] - ptsTimes[i - 1]) * 1000.0);
-  }
-
   const zeroOrNegPts: Array<[number, number, number]> = [];
   for (let i = 1; i < ptsTimes.length; i++) {
+    deltasMs.push((ptsTimes[i] - ptsTimes[i - 1]) * 1000.0);
     if (ptsTimes[i] <= ptsTimes[i - 1]) {
       zeroOrNegPts.push([
         i,
@@ -271,12 +268,12 @@ export function inspectFile(path: string, includeTimeline = false): InspectionRe
     kf_avg_kb: kfSizes.length > 0 ? Math.round((mean(kfSizes) / 1024) * 10) / 10 : 0,
     inter_avg_kb: nonKfSizes.length > 0 ? Math.round((mean(nonKfSizes) / 1024) * 10) / 10 : 0,
     pts_delta_ms: {
-      min: sDeltas.length > 0 ? Math.round(sDeltas[0] * 1000) / 1000 : 0,
+      min: sDeltas.length > 0 ? Math.round((sDeltas.at(0) ?? 0) * 1000) / 1000 : 0,
       p05: Math.round(percentile(sDeltas, 5) * 1000) / 1000,
       p50: Math.round(percentile(sDeltas, 50) * 1000) / 1000,
       p95: Math.round(percentile(sDeltas, 95) * 1000) / 1000,
       p99: Math.round(percentile(sDeltas, 99) * 1000) / 1000,
-      max: sDeltas.length > 0 ? Math.round(sDeltas[sDeltas.length - 1] * 1000) / 1000 : 0,
+      max: sDeltas.length > 0 ? Math.round((sDeltas.at(-1) ?? 0) * 1000) / 1000 : 0,
       mean: Math.round(mean(deltasMs) * 1000) / 1000,
       stdev: Math.round(pstdev(deltasMs) * 1000) / 1000,
     },
@@ -311,6 +308,18 @@ export function inspectFile(path: string, includeTimeline = false): InspectionRe
   return out;
 }
 
+export function resolveVideoTargets(positionals: string[], dir?: string): string[] {
+  const targets = [...positionals];
+  if (dir) {
+    targets.push(
+      ...readdirSync(dir)
+        .filter(f => f.endsWith('.mp4') || f.endsWith('.webm'))
+        .map(f => join(dir, f)),
+    );
+  }
+  return targets;
+}
+
 export function main(): void {
   const rawArgs = process.argv.slice(2);
   const parsed = parseArgs({
@@ -334,15 +343,7 @@ Options:
     return;
   }
 
-  const targets = [...parsed.positionals];
-  if (parsed.values.dir) {
-    const dir = parsed.values.dir;
-    targets.push(
-      ...readdirSync(dir)
-        .filter(f => f.endsWith('.mp4') || f.endsWith('.webm'))
-        .map(f => join(dir, f)),
-    );
-  }
+  const targets = resolveVideoTargets(parsed.positionals, parsed.values.dir);
 
   if (targets.length === 0) {
     console.error('Error: Provide recording paths or --dir=<path>');

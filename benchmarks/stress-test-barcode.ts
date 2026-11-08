@@ -36,6 +36,7 @@ import {
   connectCdpSession,
   findChromeBinary,
   launchChrome,
+  parseDuration,
 } from '../src/index.ts';
 import {inspectFile} from './analyze-mp4.ts';
 
@@ -63,11 +64,6 @@ export interface TestCase {
 }
 
 /**
- * Re-export `findChromeBinary` as `findChrome` for backward-compatible imports.
- */
-export const findChrome = findChromeBinary;
-
-/**
  * Rich Visual Diagnostic Canvas HTML loaded from standalone `barcode-canvas.html`.
  *
  * HARD INVARIANT:
@@ -82,6 +78,10 @@ export const BARCODE_CANVAS_HTML: string = readFileSync(
   'utf8',
 );
 
+const WHITE_GUARD_MIN = 160;
+const BLACK_GUARD_MAX = 96;
+const BIT_THRESHOLD = 128;
+
 /**
  * Decodes a single 18-block grayscale row scanline into its 16-bit frame index.
  * Checks white calibration guard (>= 160) at block 0 and black calibration guard (<= 96) at block 1.
@@ -92,19 +92,14 @@ export function decodeBarcodeScanline(rowPixels: Uint8Array, blockWidth = 24): n
     return null;
   }
   const midOffset = Math.floor(blockWidth / 2);
-  const block0Val = rowPixels[midOffset];
-  const block1Val = rowPixels[blockWidth + midOffset];
-
-  // Calibration guards: block 0 (white >= 160), block 1 (black <= 96)
-  if (block0Val < 160 || block1Val > 96) {
+  if (rowPixels[midOffset] < WHITE_GUARD_MIN || rowPixels[blockWidth + midOffset] > BLACK_GUARD_MAX) {
     return null;
   }
 
   let val = 0;
   for (let b = 0; b < 16; b++) {
     const pixelVal = rowPixels[(b + 2) * blockWidth + midOffset];
-    const bit = pixelVal >= 128 ? 1 : 0;
-    val = (val << 1) | bit;
+    val = (val << 1) | (pixelVal >= BIT_THRESHOLD ? 1 : 0);
   }
   return val;
 }
@@ -113,26 +108,11 @@ export function decodeBarcodeScanline(rowPixels: Uint8Array, blockWidth = 24): n
  * Decodes 16-bit binary pixel barcodes from the recorded MP4 using `inspectFile` from `./analyze-mp4.ts`.
  */
 export function decodeBarcodes(videoPath: string): BarcodeMetrics {
-  const result = inspectFile(videoPath, true);
-  let dups = 0;
-  let lastBarcode = -1;
-  let validFrames = 0;
-
-  for (const t of result.timeline ?? []) {
-    if (t.barcode !== null) {
-      if (t.barcode === lastBarcode) dups++;
-      lastBarcode = t.barcode;
-      validFrames++;
-    }
-  }
-
+  const result = inspectFile(videoPath);
+  const dups = result.raf_delta_hist[0] ?? 0;
+  const validFrames = result.unique_barcodes + dups;
   const dur = result.duration_s;
-  let fileSizeBytes = 0;
-  try {
-    fileSizeBytes = statSync(videoPath).size;
-  } catch {
-    fileSizeBytes = 0;
-  }
+  const fileSizeBytes = statSync(videoPath).size;
 
   return {
     duration_sec: dur,
@@ -273,8 +253,7 @@ Options:
 
   const explicitChrome = parsed.values.chrome;
   const headless = Boolean(parsed.values.headless);
-  const rawDuration = parsed.values.duration;
-  const duration = rawDuration ? parseFloat(rawDuration) : 4.0;
+  const duration = parseDuration(parsed.values.duration, 4000) / 1000;
   const outDir = parsed.values['out-dir'];
 
   const chromeBin = await findChromeBinary(explicitChrome);

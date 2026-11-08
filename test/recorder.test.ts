@@ -67,46 +67,51 @@ function createMockSession(opts: {
 }
 
 describe('parseDuration', () => {
-  it('parses milliseconds, seconds, and shorthand numbers', () => {
-    assert.equal(parseDuration(undefined, 3000), 3000);
-    assert.equal(parseDuration('3000ms'), 3000);
-    assert.equal(parseDuration('4.5s'), 4500);
-    assert.equal(parseDuration('5'), 5000);
-    assert.equal(parseDuration(2500), 2500);
-    assert.equal(parseDuration(30), 30000);
-    assert.equal(parseDuration(500), 500000);
-    assert.equal(parseDuration('1500'), 1500);
+  it('parses milliseconds, seconds, and shorthand numbers', async (t) => {
+    const validCases: Array<[string | number | undefined, number]> = [
+      [undefined, 3000],
+      ['3000ms', 3000],
+      ['4.5s', 4500],
+      ['5', 5000],
+      [2500, 2500],
+      [30, 30000],
+      [500, 500000],
+      ['1500', 1500],
+    ];
+    for (const [input, expected] of validCases) {
+      await t.test(`parses ${String(input)} -> ${expected}ms`, () => {
+        assert.equal(parseDuration(input, 3000), expected);
+      });
+    }
   });
 
-  it('throws on invalid or unparseable duration values', () => {
-    assert.throws(() => parseDuration('invalid'), /Invalid duration value/);
-    assert.throws(() => parseDuration('0s'), /Invalid duration value/);
-    assert.throws(() => parseDuration(-10), /Invalid duration value/);
-    assert.throws(() => parseDuration(NaN), /Invalid duration value/);
+  it('throws on invalid or unparseable duration values', async (t) => {
+    for (const invalid of ['invalid', '0s', -10, NaN]) {
+      await t.test(`rejects ${String(invalid)}`, () => {
+        assert.throws(() => parseDuration(invalid), /Invalid duration value/);
+      });
+    }
   });
 });
 
 describe('decodeBarcodeScanline', () => {
-  it('decodes 16-bit binary barcodes correctly from synthetic scanlines', () => {
+  it('decodes 16-bit binary barcodes correctly from synthetic scanlines', async (t) => {
     const makeScanline = (frameId: number, blockW = 24): Uint8Array => {
       const pixels = new Uint8Array(18 * blockW);
-      // Block 0: white (255)
       pixels.fill(255, 0, blockW);
-      // Block 1: black (0)
       pixels.fill(0, blockW, 2 * blockW);
-      // Blocks 2..17: bits 15..0
       for (let b = 0; b < 16; b++) {
         const bit = (frameId >> (15 - b)) & 1;
-        const val = bit ? 255 : 0;
-        pixels.fill(val, (b + 2) * blockW, (b + 3) * blockW);
+        pixels.fill(bit ? 255 : 0, (b + 2) * blockW, (b + 3) * blockW);
       }
       return pixels;
     };
 
-    assert.equal(decodeBarcodeScanline(makeScanline(0x0001)), 0x0001);
-    assert.equal(decodeBarcodeScanline(makeScanline(0xCAFE)), 0xCAFE);
-    assert.equal(decodeBarcodeScanline(makeScanline(0xFFFF)), 0xFFFF);
-    assert.equal(decodeBarcodeScanline(makeScanline(0x0000)), 0x0000);
+    for (const id of [0x0001, 0xCAFE, 0xFFFF, 0x0000]) {
+      await t.test(`decodes 0x${id.toString(16).padStart(4, '0')}`, () => {
+        assert.equal(decodeBarcodeScanline(makeScanline(id)), id);
+      });
+    }
   });
 
   it('rejects scanlines with invalid calibration guards or truncated lengths', () => {
@@ -114,16 +119,14 @@ describe('decodeBarcodeScanline', () => {
     const truncated = new Uint8Array(10 * blockW);
     assert.equal(decodeBarcodeScanline(truncated), null);
 
-    // Bad white guard (< 160)
     const badWhite = new Uint8Array(18 * blockW);
-    badWhite.fill(120, 0, blockW); // Block 0 too dark
+    badWhite.fill(120, 0, blockW);
     badWhite.fill(0, blockW, 2 * blockW);
     assert.equal(decodeBarcodeScanline(badWhite), null);
 
-    // Bad black guard (> 96)
     const badBlack = new Uint8Array(18 * blockW);
     badBlack.fill(255, 0, blockW);
-    badBlack.fill(130, blockW, 2 * blockW); // Block 1 too bright
+    badBlack.fill(130, blockW, 2 * blockW);
     assert.equal(decodeBarcodeScanline(badBlack), null);
   });
 });
@@ -211,10 +214,13 @@ describe('screenRecordingFixture', () => {
     }, fakeTestInfo);
 
     assert.equal(executed, true);
-    assert.equal(attachments.length, 1);
-    assert.equal(attachments[0].name, 'video-60fps');
-    assert.equal(attachments[0].path, '/tmp/test-out/recording-60fps.mp4');
-    assert.equal(attachments[0].contentType, 'video/mp4');
+    assert.deepEqual(attachments, [
+      {
+        name: 'video-60fps',
+        path: '/tmp/test-out/recording-60fps.mp4',
+        contentType: 'video/mp4',
+      },
+    ]);
   });
 });
 

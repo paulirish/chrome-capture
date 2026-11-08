@@ -28,6 +28,7 @@ import {
   connectCdpSession,
   findChromeBinary,
   launchChrome,
+  parseDuration,
 } from '../src/index.ts';
 import {BARCODE_CANVAS_HTML} from './stress-test-barcode.ts';
 
@@ -139,89 +140,89 @@ export async function runCase(
     res.end(html);
   });
   await new Promise(r => server.listen(0, '127.0.0.1', () => r(undefined)));
-  const addr = server.address();
-  const port = typeof addr === 'object' && addr !== null ? addr.port : 8080;
-  const targetUrl = `http://127.0.0.1:${port}/`;
-
-  const launched = await launchChrome({
-    explicitPath: chromeBin,
-    width: testCase.width,
-    height: testCase.height,
-    headless,
-    extraArgs: [
-      '--auto-accept-this-tab-capture',
-      '--use-fake-ui-for-media-stream',
-    ],
-    url: targetUrl,
-  });
-
   try {
-    const session = await connectCdpSession(launched.pageTargetWs);
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr !== null ? addr.port : 8080;
+    const targetUrl = `http://127.0.0.1:${port}/`;
 
-    try {
-      await session.send('Emulation.setDeviceMetricsOverride', {
-        width: testCase.width,
-        height: testCase.height,
-        deviceScaleFactor: 1,
-        mobile: false,
-      });
-    } catch {
-      // Ignore if unsupported
-    }
-
-    // Wait 2 rAF ticks for canvas loop initialization
-    await session.send('Runtime.evaluate', {
-      expression: 'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
-      awaitPromise: true,
-    });
-
-    const expr = `window.__recordTab(${JSON.stringify({
+    const launched = await launchChrome({
+      explicitPath: chromeBin,
       width: testCase.width,
       height: testCase.height,
-      fps: testCase.fps,
-      mimeType: testCase.mimeType,
-      durationMs: testCase.durationMs,
-      videoBitsPerSecond: testCase.videoBitsPerSecond,
-    })})`;
-
-    const evalRes = await session.send('Runtime.evaluate', {
-      expression: expr,
-      awaitPromise: true,
-      returnByValue: true,
+      headless,
+      extraArgs: [
+        '--auto-accept-this-tab-capture',
+        '--use-fake-ui-for-media-stream',
+      ],
+      url: targetUrl,
     });
 
-    if (evalRes.exceptionDetails) {
-      throw new Error(`MediaRecorder execution error: ${JSON.stringify(evalRes.exceptionDetails)}`);
+    try {
+      const session = await connectCdpSession(launched.pageTargetWs);
+
+      try {
+        await session.send('Emulation.setDeviceMetricsOverride', {
+          width: testCase.width,
+          height: testCase.height,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+      } catch {}
+
+      await session.send('Runtime.evaluate', {
+        expression: 'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
+        awaitPromise: true,
+      });
+
+      const expr = `window.__recordTab(${JSON.stringify({
+        width: testCase.width,
+        height: testCase.height,
+        fps: testCase.fps,
+        mimeType: testCase.mimeType,
+        durationMs: testCase.durationMs,
+        videoBitsPerSecond: testCase.videoBitsPerSecond,
+      })})`;
+
+      const evalRes = await session.send('Runtime.evaluate', {
+        expression: expr,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+
+      if (evalRes.exceptionDetails) {
+        throw new Error(`MediaRecorder execution error: ${JSON.stringify(evalRes.exceptionDetails)}`);
+      }
+
+      const val = evalRes.result.value as MediaRecorderResult;
+      const ext = testCase.mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const outPath = join(outDir, `${testCase.label}.${ext}`);
+      await writeFile(outPath, Buffer.from(val.b64, 'base64'));
+      await writeFile(
+        join(outDir, `${testCase.label}.meta.json`),
+        JSON.stringify(
+          {
+            label: testCase.label,
+            mimeUsed: val.mimeUsed,
+            settings: val.settings,
+            rafFps: val.rafFps,
+            finalizeMs: val.finalizeMs,
+            trackTimestampsCount: val.trackTimestampsUs.length,
+            trackTimestampsUs: val.trackTimestampsUs,
+          },
+          null,
+          2,
+        ),
+      );
+
+      console.log(
+        `${testCase.label}: saved ${outPath} (${val.mimeUsed}, ${val.settings.width}x${val.settings.height}@${val.settings.frameRate}, raf=${val.rafFps}, finalize=${val.finalizeMs}ms)`,
+      );
+
+      session.close();
+    } finally {
+      await launched.close();
     }
-
-    const val = evalRes.result.value as MediaRecorderResult;
-    const ext = testCase.mimeType.includes('mp4') ? 'mp4' : 'webm';
-    const outPath = join(outDir, `${testCase.label}.${ext}`);
-    await writeFile(outPath, Buffer.from(val.b64, 'base64'));
-    await writeFile(
-      join(outDir, `${testCase.label}.meta.json`),
-      JSON.stringify(
-        {
-          label: testCase.label,
-          mimeUsed: val.mimeUsed,
-          settings: val.settings,
-          rafFps: val.rafFps,
-          finalizeMs: val.finalizeMs,
-          trackTimestampsCount: val.trackTimestampsUs.length,
-          trackTimestampsUs: val.trackTimestampsUs,
-        },
-        null,
-        2,
-      ),
-    );
-
-    console.log(
-      `${testCase.label}: saved ${outPath} (${val.mimeUsed}, ${val.settings.width}x${val.settings.height}@${val.settings.frameRate}, raf=${val.rafFps}, finalize=${val.finalizeMs}ms)`,
-    );
-
-    session.close();
   } finally {
-    await launched.close();
     server.closeAllConnections?.();
     server.close();
   }
@@ -255,7 +256,7 @@ Options:
   }
 
   const outDir = parsed.values['out-dir'] ?? join(process.cwd(), 'recordings', 'mediarecorder');
-  const durationMs = parsed.values.duration ? Number(parsed.values.duration) : 4000;
+  const durationMs = parseDuration(parsed.values.duration, 4000);
   const headless = Boolean(parsed.values.headless);
   const chromeBin = await findChromeBinary(parsed.values.chrome);
 

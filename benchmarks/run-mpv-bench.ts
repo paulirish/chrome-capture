@@ -18,12 +18,13 @@
  */
 
 import {spawnSync} from 'node:child_process';
-import {existsSync, readFileSync, readdirSync, rmSync} from 'node:fs';
+import {existsSync, readFileSync, rmSync} from 'node:fs';
 import {mkdtemp, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {basename, dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
+import {resolveVideoTargets} from './analyze-mp4.ts';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_LUA = join(SCRIPT_DIR, 'mpv_telemetry.lua');
@@ -123,15 +124,7 @@ Options:
     return;
   }
 
-  const targets = [...parsed.positionals];
-  if (parsed.values.dir) {
-    const dir = parsed.values.dir;
-    targets.push(
-      ...readdirSync(dir)
-        .filter(f => f.endsWith('.mp4') || f.endsWith('.webm'))
-        .map(f => join(dir, f)),
-    );
-  }
+  const targets = resolveVideoTargets(parsed.positionals, parsed.values.dir);
 
   if (targets.length === 0) {
     console.error('Error: Provide recording paths or --dir=<path>');
@@ -148,9 +141,7 @@ Options:
     for (const fpath of targets) {
       const fname = basename(fpath);
       for (const mode of MODES) {
-        if (existsSync(outJson)) {
-          rmSync(outJson, {force: true});
-        }
+        rmSync(outJson, {force: true});
 
         const env = {
           ...process.env,
@@ -176,13 +167,9 @@ Options:
         const wallS = (performance.now() - t0) / 1000.0;
 
         let data: MpvTelemetryData = {};
-        if (existsSync(outJson)) {
-          try {
-            data = JSON.parse(readFileSync(outJson, 'utf8')) as MpvTelemetryData;
-          } catch {
-            // Ignore corrupted json
-          }
-        }
+        try {
+          data = JSON.parse(readFileSync(outJson, 'utf8')) as MpvTelemetryData;
+        } catch {}
 
         const entry: MpvBenchmarkResult = {
           file: fname,

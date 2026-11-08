@@ -52,12 +52,10 @@ export interface LaunchedChrome {
 }
 
 export class CdpScreenRecorder {
-  session: CdpSessionLike;
-  streamHandle: Protocol.IO.StreamHandle | undefined;
+  readonly session: CdpSessionLike;
 
   constructor(session: CdpSessionLike) {
     this.session = session;
-    this.streamHandle = undefined;
   }
 
   /**
@@ -78,7 +76,6 @@ export class CdpScreenRecorder {
       ...options,
     };
     const {stream} = await this.session.send('Page.startScreenRecording', request);
-    this.streamHandle = stream;
     return stream;
   }
 
@@ -86,8 +83,7 @@ export class CdpScreenRecorder {
    * Stops the active recording, drains the `IO.StreamHandle`, and returns the MP4 bytes.
    */
   async stop(): Promise<Buffer> {
-    const {stream} = await this.session.send('Page.stopScreenRecording');
-    const handle = stream || this.streamHandle;
+    const {stream: handle} = await this.session.send('Page.stopScreenRecording');
     if (!handle) {
       throw new Error('No active stream handle from Page.stopScreenRecording.');
     }
@@ -103,7 +99,6 @@ export class CdpScreenRecorder {
       }
     } finally {
       await this.session.send('IO.close', {handle}).catch(() => {});
-      this.streamHandle = undefined;
     }
     return Buffer.concat(chunks);
   }
@@ -195,9 +190,7 @@ export async function findChromeBinary(explicitPath?: string): Promise<string> {
     try {
       await access(process.env.CHROME_PATH);
       return process.env.CHROME_PATH;
-    } catch {
-      // Continue searching
-    }
+    } catch {}
   }
 
   const candidates = platform() === 'darwin'
@@ -213,9 +206,7 @@ export async function findChromeBinary(explicitPath?: string): Promise<string> {
     try {
       await access(candidate);
       return candidate;
-    } catch {
-      // Try next candidate.
-    }
+    } catch {}
   }
 
   const pptrCache = join(homedir(), '.cache', 'puppeteer', 'chrome');
@@ -231,9 +222,7 @@ export async function findChromeBinary(explicitPath?: string): Promise<string> {
       await access(candidate);
       return candidate;
     }
-  } catch {
-    // Fall back to throw below.
-  }
+  } catch {}
 
   throw new Error('Could not find Google Chrome (M153+). Set CHROME_PATH or pass --chrome=/path/to/chrome');
 }
@@ -265,9 +254,13 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
   const proc = spawn(chromePath, chromeArgs, {stdio: ['ignore', 'ignore', 'pipe']});
 
   let cleanedUp = false;
+  const sigintHandler = () => void cleanup().finally(() => process.exit(130));
+  const sigtermHandler = () => void cleanup().finally(() => process.exit(143));
   const cleanup = async () => {
     if (cleanedUp) return;
     cleanedUp = true;
+    process.removeListener('SIGINT', sigintHandler);
+    process.removeListener('SIGTERM', sigtermHandler);
     proc.stderr?.destroy();
     if (proc.exitCode === null && proc.signalCode === null) {
       const exitPromise = new Promise<void>(resolve => proc.once('exit', () => resolve()));
@@ -281,8 +274,6 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
     await rm(userDataDir, {recursive: true, force: true}).catch(() => {});
   };
 
-  const sigintHandler = () => void cleanup().finally(() => process.exit(130));
-  const sigtermHandler = () => void cleanup().finally(() => process.exit(143));
   process.once('SIGINT', sigintHandler);
   process.once('SIGTERM', sigtermHandler);
 
@@ -333,15 +324,9 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
       browserWsUrl,
       pageTargetWs,
       userDataDir,
-      close: async () => {
-        process.removeListener('SIGINT', sigintHandler);
-        process.removeListener('SIGTERM', sigtermHandler);
-        await cleanup();
-      },
+      close: cleanup,
     };
   } catch (err) {
-    process.removeListener('SIGINT', sigintHandler);
-    process.removeListener('SIGTERM', sigtermHandler);
     await cleanup();
     throw err;
   }
@@ -385,6 +370,18 @@ export type RecordingTarget =
   | PuppeteerPageLike
   | CdpSessionLike;
 
+function isPlaywrightPage(target: RecordingTarget): target is PlaywrightPageLike {
+  return typeof target === 'object' && target !== null && 'context' in target && typeof target.context === 'function';
+}
+
+function isPuppeteerPage(target: RecordingTarget): target is PuppeteerPageLike {
+  return typeof target === 'object' && target !== null && 'createCDPSession' in target && typeof target.createCDPSession === 'function';
+}
+
+function isCdpSession(target: RecordingTarget): target is CdpSessionLike {
+  return typeof target === 'object' && target !== null && 'send' in target && typeof target.send === 'function';
+}
+
 /**
  * Universal recording entrypoint supporting Playwright Page, Puppeteer Page, and raw CDP session.
  * Returns an ActiveRecording handle compatible with `await using` (`Symbol.asyncDispose`).
@@ -396,17 +393,16 @@ export async function startRecording(
   let session: CdpSessionLike;
   let detachSession: (() => Promise<void>) | undefined;
 
-  if (typeof target === 'object' && target !== null && 'context' in target && typeof target.context === 'function') {
-    const pwPage = target as PlaywrightPageLike;
-    const cdpSession = await pwPage.context().newCDPSession(pwPage);
+  if (isPlaywrightPage(target)) {
+    const cdpSession = await target.context().newCDPSession(target);
     session = cdpSession;
     detachSession = () => cdpSession.detach().catch(() => {});
-  } else if (typeof target === 'object' && target !== null && 'createCDPSession' in target && typeof target.createCDPSession === 'function') {
-    const cdpSession = await (target as PuppeteerPageLike).createCDPSession();
+  } else if (isPuppeteerPage(target)) {
+    const cdpSession = await target.createCDPSession();
     session = cdpSession;
     detachSession = () => cdpSession.detach().catch(() => {});
-  } else if (typeof target === 'object' && target !== null && 'send' in target && typeof target.send === 'function') {
-    session = target as CdpSessionLike;
+  } else if (isCdpSession(target)) {
+    session = target;
   } else {
     throw new Error('Unsupported recording target: must be a Playwright Page, Puppeteer Page, or CDP session.');
   }
@@ -415,11 +411,13 @@ export async function startRecording(
   await recorder.start(options);
 
   let stopPromise: Promise<Buffer> | undefined;
+  const writtenPaths = new Set<string>();
   const stop = async (outPath?: string): Promise<Buffer> => {
     stopPromise ??= recorder.stop().finally(() => detachSession?.());
     const buf = await stopPromise;
     const effectiveOutPath = outPath ?? options.outputPath;
-    if (effectiveOutPath) {
+    if (effectiveOutPath && !writtenPaths.has(effectiveOutPath)) {
+      writtenPaths.add(effectiveOutPath);
       await mkdir(dirname(effectiveOutPath), {recursive: true});
       await writeFile(effectiveOutPath, buf);
     }
