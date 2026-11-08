@@ -7,10 +7,21 @@
 import assert from 'node:assert/strict';
 import {describe, it} from 'node:test';
 import type {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js';
-import {CdpScreenRecorder, type CdpSessionLike, parseDuration} from '../capture-cdp.ts';
-import {createPlaywrightRecorder, type PlaywrightPageLike} from '../capture-playwright.ts';
-import {createPuppeteerRecorder, type PuppeteerPageLike} from '../capture-pptr.ts';
-import {BARCODE_CANVAS_HTML, decodeBarcodeScanline} from '../stress-test-barcode.ts';
+import {
+  CdpScreenRecorder,
+  type CdpSessionLike,
+  createPlaywrightRecorder,
+  createPuppeteerRecorder,
+  parseDuration,
+  type PlaywrightPageLike,
+  type PuppeteerPageLike,
+  startRecording,
+} from '../src/index.ts';
+import {screenRecordingFixture} from '../src/playwright.ts';
+import {
+  BARCODE_CANVAS_HTML,
+  decodeBarcodeScanline,
+} from '../benchmarks/stress-test-barcode.ts';
 
 describe('parseDuration', () => {
   it('parses milliseconds, seconds, and shorthand numbers', () => {
@@ -190,6 +201,104 @@ describe('CdpScreenRecorder', () => {
     const pwBuf = await pwRec.stop();
     assert.equal(pwBuf.toString('utf8'), 'mp4-bytes');
     assert.equal(detached, 2);
+  });
+});
+
+describe('startRecording & asyncDispose', () => {
+  it('supports universal target recording, idempotent stop, and Symbol.asyncDispose', async () => {
+    let detached = 0;
+    const makeSession = () => ({
+      async send<K extends keyof ProtocolMapping.Commands>(
+        method: K,
+        ..._params: ProtocolMapping.Commands[K]['paramsType']
+      ): Promise<ProtocolMapping.Commands[K]['returnType']> {
+        if (method === 'Page.startScreenRecording' || method === 'Page.stopScreenRecording') {
+          return {stream: 'stream-universal'} as ProtocolMapping.Commands[K]['returnType'];
+        }
+        if (method === 'IO.read') {
+          return {
+            data: Buffer.from('universal-mp4').toString('base64'),
+            base64Encoded: true,
+            eof: true,
+          } as ProtocolMapping.Commands[K]['returnType'];
+        }
+        return {} as ProtocolMapping.Commands[K]['returnType'];
+      },
+      async detach(): Promise<void> {
+        detached++;
+      },
+    });
+
+    const pwPage: PlaywrightPageLike = {
+      context: () => ({
+        newCDPSession: async () => makeSession(),
+      }),
+    };
+
+    let resultBuf: Buffer | undefined;
+    {
+      await using rec = await startRecording(pwPage, {frameRate: 60});
+      const firstStop = await rec.stop();
+      assert.equal(firstStop.toString('utf8'), 'universal-mp4');
+      const secondStop = await rec.stop(); // Idempotent check
+      assert.equal(secondStop.toString('utf8'), 'universal-mp4');
+      resultBuf = secondStop;
+    }
+    // Exiting await using block triggered [Symbol.asyncDispose]() safely
+    assert.equal(resultBuf.toString('utf8'), 'universal-mp4');
+    assert.equal(detached, 1);
+  });
+});
+
+describe('screenRecordingFixture', () => {
+  it('manages fixture lifecycle and attaches recording to testInfo', async () => {
+    const makeSession = () => ({
+      async send<K extends keyof ProtocolMapping.Commands>(
+        method: K,
+        ..._params: ProtocolMapping.Commands[K]['paramsType']
+      ): Promise<ProtocolMapping.Commands[K]['returnType']> {
+        if (method === 'Page.startScreenRecording' || method === 'Page.stopScreenRecording') {
+          return {stream: 'stream-fixture'} as ProtocolMapping.Commands[K]['returnType'];
+        }
+        if (method === 'IO.read') {
+          return {
+            data: Buffer.from('fixture-mp4').toString('base64'),
+            base64Encoded: true,
+            eof: true,
+          } as ProtocolMapping.Commands[K]['returnType'];
+        }
+        return {} as ProtocolMapping.Commands[K]['returnType'];
+      },
+      async detach(): Promise<void> {},
+    });
+
+    const pwPage: PlaywrightPageLike = {
+      context: () => ({
+        newCDPSession: async () => makeSession(),
+      }),
+    };
+
+    const attachments: Array<{name: string; path?: string; contentType?: string}> = [];
+    const fakeTestInfo = {
+      outputPath: (name: string) => `/tmp/test-out/${name}`,
+      attach: async (name: string, opts: {path?: string; contentType?: string}) => {
+        attachments.push({name, ...opts});
+      },
+    };
+
+    const [fixtureFn, meta] = screenRecordingFixture({auto: true, frameRate: 60});
+    assert.equal(meta.auto, true);
+
+    let executed = false;
+    await fixtureFn({page: pwPage}, async (_controller) => {
+      executed = true;
+    }, fakeTestInfo);
+
+    assert.equal(executed, true);
+    assert.equal(attachments.length, 1);
+    assert.equal(attachments[0].name, 'video-60fps');
+    assert.equal(attachments[0].path, '/tmp/test-out/recording-60fps.mp4');
+    assert.equal(attachments[0].contentType, 'video/mp4');
   });
 });
 

@@ -11,82 +11,114 @@ Instead of piping base64 JPEGs over a WebSocket into a single-threaded `ffmpeg` 
 Requires **Node 24+** (native `.ts` execution + built-in `WebSocket`) and **Chrome / Chromium M153+**:
 
 ```bash
-# 1. Raw CDP (zero runtime dependencies)
-node capture-cdp.ts https://example.com demo-60fps.mp4 4s
+# 1. Run via package binary or directly with node
+npx chrome-capture-60fps https://example.com demo-60fps.mp4 4s
+node src/cli.ts https://example.com demo-60fps.mp4 4s
 
 # Record 1080p @ 120fps on a 120Hz display (e.g. macOS ProMotion)
-node capture-cdp.ts https://example.com demo-120fps.mp4 --fps=120 --width=1920 --height=1080 --duration=5s
+node src/cli.ts https://example.com demo-120fps.mp4 --fps=120 --width=1920 --height=1080 --duration=5s
 
 # Record 4K (3840x2160) @ 60fps
-node capture-cdp.ts https://example.com demo-4k60.mp4 --fps=60 --width=3840 --height=2160 --duration=4s
+node src/cli.ts https://example.com demo-4k60.mp4 --fps=60 --width=3840 --height=2160 --duration=4s
 
 # Record the live page AND Chrome DevTools panels side-by-side in one tab
-node capture-cdp.ts https://example.com devtools-split.mp4 5s --with-devtools
-
-# 2. Puppeteer CLI
-node capture-pptr.ts https://example.com demo-pptr.mp4 4s
-
-# 3. Playwright CLI
-node capture-playwright.ts https://example.com demo-pw.mp4 4s
+node src/cli.ts https://example.com devtools-split.mp4 5s --with-devtools
 ```
 
 ---
 
 ## Programmatic Usage (Playwright / Puppeteer / Raw CDP)
 
-Strongly typed against `devtools-protocol` (`Protocol.Page.StartScreenRecordingRequest`). You can use the framework-specific helpers ([`capture-playwright.ts`](./capture-playwright.ts), [`capture-pptr.ts`](./capture-pptr.ts)) or wrap any CDP client Directly with [`CdpScreenRecorder`](./capture-cdp.ts):
+Strongly typed against `devtools-protocol` (`Protocol.Page.StartScreenRecordingRequest`).
 
-### Playwright (`capture-playwright.ts`)
+### 1. Universal `startRecording` (`Playwright`, `Puppeteer`, or Raw CDP)
+
+`startRecording(page, options)` works identically across Playwright `Page`, Puppeteer `Page`, and raw CDP sessions, and supports `Symbol.asyncDispose` (`await using`):
 
 ```ts
-import {writeFile} from 'node:fs/promises';
-import {createPlaywrightRecorder} from './capture-playwright.ts';
+import {chromium} from 'playwright';
+import {startRecording} from 'chrome-capture-60fps';
 
-const recorder = await createPlaywrightRecorder(page, {
-  frameRate: 60,     // 60, 90, or 120
-  maxWidth: 1920,
-  maxHeight: 1080,
-  audio: true,       // 48kHz stereo Opus tab loopback audio
-});
+const browser = await chromium.launch();
+const page = await browser.newPage();
 
-// ... drive Playwright UI interactions (survives cross-origin navigations!) ...
+// Automatically records and flushes to 'output.mp4' when exiting block scope!
+{
+  await using recording = await startRecording(page, {
+    outputPath: 'output.mp4',
+    frameRate: 60,
+    maxWidth: 1920,
+    maxHeight: 1080,
+    audio: true, // 48kHz stereo Opus tab loopback audio
+  });
 
-const mp4Buffer = await recorder.stop();
-await writeFile('recording.mp4', mp4Buffer);
+  await page.goto('https://example.com');
+  // ... drive UI actions ...
+}
 ```
 
-### Puppeteer (`capture-pptr.ts`)
+Or stop manually and receive the MP4 `Buffer`:
 
 ```ts
-import {writeFile} from 'node:fs/promises';
-import {createPuppeteerRecorder} from './capture-pptr.ts';
+const recording = await startRecording(page, {frameRate: 60});
+await page.goto('https://example.com');
+const mp4Buffer = await recording.stop('recording.mp4');
+```
 
-const recorder = await createPuppeteerRecorder(page, {
+### 2. `@playwright/test` Fixture (`test.extend`)
+
+Drop high-FPS recording into Playwright test suites without modifying individual test bodies:
+
+```ts
+import {test as base} from '@playwright/test';
+import {screenRecordingFixture} from 'chrome-capture-60fps/playwright';
+
+export const test = base.extend<{recordVideo60fps: void}>({
+  recordVideo60fps: screenRecordingFixture({
+    frameRate: 60,
+    audio: true,
+  }),
+});
+
+test('high-fps visual flow', async ({page}) => {
+  await page.goto('https://example.com');
+  // Video is automatically recorded and attached to testInfo!
+});
+```
+
+### 3. Puppeteer Adapter (`chrome-capture-60fps/pptr`)
+
+```ts
+import puppeteer from 'puppeteer';
+import {startRecording} from 'chrome-capture-60fps/pptr';
+
+const browser = await puppeteer.launch();
+const [page] = await browser.pages();
+
+const recording = await startRecording(page, {
+  outputPath: 'pptr-demo.mp4',
   frameRate: 60,
-  maxWidth: 1920,
-  maxHeight: 1080,
-  audio: true,
 });
 
-// ... drive Puppeteer UI interactions ...
-
-const mp4Buffer = await recorder.stop();
-await writeFile('recording.mp4', mp4Buffer);
+await page.goto('https://example.com');
+await recording.stop();
 ```
 
-### Raw CDP (`capture-cdp.ts`)
+### 4. Raw CDP (`CdpScreenRecorder`)
+
+Zero external dependencies—just Node 24+ and DevTools Protocol:
 
 ```ts
 import {writeFile} from 'node:fs/promises';
-import {CdpScreenRecorder, connectCdpSession} from './capture-cdp.ts';
+import {CdpScreenRecorder, connectCdpSession} from 'chrome-capture-60fps';
 
-const session = await connectCdpSession(pageWebSocketDebuggerUrl);
+const session = await connectCdpSession(webSocketDebuggerUrl);
 const recorder = new CdpScreenRecorder(session);
 
 await recorder.start({frameRate: 60, maxWidth: 1920, maxHeight: 1080, audio: true});
 // ...
 const mp4Buffer = await recorder.stop();
-await writeFile('recording.mp4', mp4Buffer);
+await writeFile('raw-cdp.mp4', mp4Buffer);
 session.close();
 ```
 
@@ -94,7 +126,7 @@ session.close();
 
 ## How Much Better Is It?
 
-Full architectural breakdown and benchmark tables are in **[`cdp-screen-recording-benchmarks.md`](./cdp-screen-recording-benchmarks.md)**.
+Full architectural breakdown and benchmark tables are in **[`benchmarks/README.md`](./benchmarks/README.md)**.
 
 ### 1. Head-to-Head vs. Playwright `record_video_dir` (`1280x800`, 6.44s UI Replay)
 
@@ -109,7 +141,7 @@ Full architectural breakdown and benchmark tables are in **[`cdp-screen-recordin
 
 ### 2. Scaling on macOS ProMotion (`120Hz CVDisplayLink` + Apple Silicon M4 Max)
 
-Verified with a **16-bit per-frame `requestAnimationFrame` pixel barcode** ([`stress-test-barcode.ts`](./stress-test-barcode.ts)) to measure true unique rendered frames vs. container packet counts:
+Verified with a **16-bit per-frame `requestAnimationFrame` pixel barcode** ([`benchmarks/stress-test-barcode.ts`](./benchmarks/stress-test-barcode.ts)) to measure true unique rendered frames vs. container packet counts:
 
 | Test Case (Native ProMotion VSync) | Target FPS | In-Page `rAF` FPS | Container FPS | **True Unique Visual FPS** | `dPTS` P50 (`Stdev`) | Finalize Latency | `mpv` Drops (`display-resample`) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -128,9 +160,11 @@ Verified with a **16-bit per-frame `requestAnimationFrame` pixel barcode** ([`st
 
 ## Benchmark & Telemetry Suite
 
-* **[`cdp-screen-recording-benchmarks.md`](./cdp-screen-recording-benchmarks.md)** — Full writeup covering architecture, `VideoCaptureOracle` ~1s phase-lock vs. `rAF` barcode cadence, full-range Display P3 (`pc/iec61966-2-1/smpte432`) color metadata, packet-indexed `2 * target_fps` GOPs, VFR idle suspension, and `Page.startScreenRecording` vs. `getDisplayMedia` + `MediaRecorder`.
-* **[`stress-test-barcode.ts`](./stress-test-barcode.ts)** — TypeScript stress-test runner (`1080p@60/90/120`, `1440p@60`, `4K@30/60`) with a rich live telemetry HUD canvas and 16-bit binary `rAF` barcode verification.
-* **[`benchmarks/analyze_mp4.py`](./benchmarks/analyze_mp4.py)** — Per-packet `ffprobe` PTS/DTS + 16-bit `rAF` barcode correlator (`dPTS` percentiles/stdev, `dRAF` histograms, GOP keyframe indices, color tags).
-* **[`benchmarks/vfr_burst_test.py`](./benchmarks/vfr_burst_test.py)** — Static-idle → 120Hz burst → static-idle VFR & packet-indexed GOP wakeup test.
-* **[`benchmarks/compare_mediarecorder.mjs`](./benchmarks/compare_mediarecorder.mjs)** — Head-to-head `Page.startScreenRecording` vs. web-exposed `getDisplayMedia({preferCurrentTab: true})` + `MediaRecorder` benchmark runner.
-* **[`benchmarks/run_mpv_bench.py`](./benchmarks/run_mpv_bench.py)** & **[`benchmarks/mpv_telemetry.lua`](./benchmarks/mpv_telemetry.lua)** — `mpv` playback telemetry harness (VO/decoder frame drops, `--video-sync=display-resample` jitter, and untimed `videotoolbox` vs `libdav1d` decode FPS).
+All benchmarks run directly with Node 24+ (`node benchmarks/<script>.ts`):
+
+* **[`benchmarks/README.md`](./benchmarks/README.md)** — Full writeup covering architecture, `VideoCaptureOracle` ~1s phase-lock vs. `rAF` barcode cadence, full-range Display P3 (`pc/iec61966-2-1/smpte432`) color metadata, packet-indexed `2 * target_fps` GOPs, VFR idle suspension, and `Page.startScreenRecording` vs. `MediaRecorder`.
+* **[`benchmarks/stress-test-barcode.ts`](./benchmarks/stress-test-barcode.ts)** — TypeScript stress-test runner (`1080p@60/90/120`, `1440p@60`, `4K@30/60`) with a rich live telemetry HUD canvas and 16-bit binary `rAF` barcode verification.
+* **[`benchmarks/analyze-mp4.ts`](./benchmarks/analyze-mp4.ts)** — Per-packet `ffprobe` PTS/DTS + 16-bit `rAF` barcode correlator (`dPTS` percentiles/stdev, `dRAF` histograms, GOP keyframe indices, color tags).
+* **[`benchmarks/vfr-burst-test.ts`](./benchmarks/vfr-burst-test.ts)** — Static-idle → 120Hz burst → static-idle VFR & packet-indexed GOP wakeup test.
+* **[`benchmarks/compare-mediarecorder.ts`](./benchmarks/compare-mediarecorder.ts)** — Head-to-head `Page.startScreenRecording` vs. web-exposed `getDisplayMedia({preferCurrentTab: true})` + `MediaRecorder` benchmark runner.
+* **[`benchmarks/run-mpv-bench.ts`](./benchmarks/run-mpv-bench.ts)** & **[`benchmarks/mpv_telemetry.lua`](./benchmarks/mpv_telemetry.lua)** — `mpv` playback telemetry harness (VO/decoder frame drops, `--video-sync=display-resample` jitter, and untimed `videotoolbox` vs `libdav1d` decode FPS).

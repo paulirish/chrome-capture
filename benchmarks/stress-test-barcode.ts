@@ -36,7 +36,7 @@ import {
   connectCdpSession,
   findChromeBinary,
   launchChrome,
-} from './capture-cdp.ts';
+} from '../src/index.ts';
 
 export interface BarcodeMetrics {
   duration_sec: number;

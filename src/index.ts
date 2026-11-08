@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * @license
  * Copyright 2026 Google LLC
@@ -11,22 +10,20 @@
  * Runs in the browser process (`WebContentsVideoCaptureDevice` -> `content::protocol::MediaRecorder`)
  * and encodes AV1 video + 48kHz stereo Opus audio into MP4 inside a utility process
  * (`devtools_media_encoding_server`), returning an `IO.StreamHandle`.
- *
- * See also:
- * - `./capture-pptr.ts` for Puppeteer integration (`page.createCDPSession()`)
- * - `./capture-playwright.ts` for Playwright integration (`page.context().newCDPSession(page)`)
  */
 
 import {spawn, type ChildProcess} from 'node:child_process';
-import {access, mkdtemp, readdir, rm, writeFile} from 'node:fs/promises';
+import {access, mkdir, mkdtemp, readdir, rm, writeFile} from 'node:fs/promises';
 import {homedir, platform, tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {parseArgs} from 'node:util';
+import {dirname, join} from 'node:path';
 import type {Protocol} from 'devtools-protocol';
 import type {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js';
+import type {Page as PlaywrightPage} from 'playwright-core';
+import type {Page as PuppeteerPage} from 'puppeteer-core';
 
-export type ScreenRecordingOptions = Protocol.Page.StartScreenRecordingRequest;
+export interface ScreenRecordingOptions extends Protocol.Page.StartScreenRecordingRequest {
+  outputPath?: string;
+}
 
 export interface CdpSessionLike {
   send<K extends keyof ProtocolMapping.Commands>(
@@ -189,7 +186,7 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
   });
 
   ws.addEventListener('message', (event) => {
-    const msg = JSON.parse(String(event.data)) as CdpRpcMessage;
+    const msg = parseCdpRpcMessage(String(event.data));
     if (!msg || typeof msg.id !== 'number') return;
     const entry = pending.get(msg.id);
     if (!entry) return;
@@ -236,8 +233,24 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
   };
 }
 
+function parseCdpRpcMessage(text: string): CdpRpcMessage | null {
+  try {
+    const parsed = JSON.parse(text) as {
+      id?: number;
+      result?: ProtocolMapping.Commands[keyof ProtocolMapping.Commands]['returnType'];
+      error?: CdpRpcError;
+    };
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Resolves a local Chrome 153+ executable (checks explicitPath, CHROME_PATH, system paths, or Puppeteer cache).
+ * Resolves the path to a Google Chrome (M153+) binary.
+ * If explicitPath is given, checks existence and throws if missing.
+ * Otherwise checks CHROME_PATH, standard OS locations, and Puppeteer cache.
  */
 export async function findChromeBinary(explicitPath?: string): Promise<string> {
   if (explicitPath) {
@@ -441,143 +454,159 @@ export function parseDuration(val: string | number | undefined, defaultMs = 3000
   return num < 1000 ? num * 1000 : num;
 }
 
-async function cli(): Promise<void> {
-  const rawArgs = process.argv.slice(2);
-
-  if (rawArgs.includes('--help') || rawArgs.includes('-h')) {
-    console.log(`Usage: node capture-cdp.ts [url] [output] [duration] [options]
-
-Arguments:
-  url                         Target page URL (default: http://localhost:8080/ or https://example.com)
-  output                      Output MP4 file path (default: demo-60fps.mp4)
-  duration                    Duration in ms or seconds (e.g. 3000, 3s, 5s) (default: 3000ms)
-
-Options:
-  --duration=<val>            Recording duration (e.g. 3000, 3s, 3000ms)
-  --fps=<num>                 Target frame rate (default: 60)
-  --width=<pixels>            Viewport width (default: 1280)
-  --height=<pixels>           Viewport height (default: 720)
-  --warmup=<ms>               Warmup delay before recording starts (default: 1000ms)
-  --capture-area=<area>       'target' (tab viewport) or 'browserWindow' (default: target)
-  --audio                     Enable audio track recording (default)
-  --no-audio                  Disable audio track recording
-  --headed                    Run in headed mode (default on macOS)
-  --headless                  Run in --headless=new mode (default on Linux)
-  --with-devtools             Open screencast + DevTools side-by-side in inspector.html
-  --chrome=<path>             Path to Google Chrome executable
-  -h, --help                  Show this help message
-`);
-    return;
-  }
-
-  const parsed = parseArgs({
-    args: rawArgs,
-    options: {
-      duration: {type: 'string'},
-      fps: {type: 'string'},
-      frameRate: {type: 'string'},
-      width: {type: 'string'},
-      height: {type: 'string'},
-      warmup: {type: 'string'},
-      'capture-area': {type: 'string'},
-      audio: {type: 'boolean'},
-      'no-audio': {type: 'boolean'},
-      headed: {type: 'boolean'},
-      headless: {type: 'boolean'},
-      'with-devtools': {type: 'boolean'},
-      chrome: {type: 'string'},
-      url: {type: 'string'},
-      out: {type: 'string'},
-      output: {type: 'string'},
-      help: {type: 'boolean', short: 'h'},
-    },
-    allowPositionals: true,
-  });
-
-  const url = parsed.values.url ?? parsed.positionals[0] ?? 'http://localhost:8080/';
-  const outPath = parsed.values.out ?? parsed.values.output ?? parsed.positionals[1] ?? 'demo-60fps.mp4';
-  const rawDuration = parsed.values.duration ?? parsed.positionals[2];
-  const durationMs = parseDuration(rawDuration, 3000);
-  const width = parseInt(parsed.values.width ?? '1280', 10);
-  const height = parseInt(parsed.values.height ?? '720', 10);
-  const frameRate = parseInt(parsed.values.fps ?? parsed.values.frameRate ?? '60', 10);
-  const warmupMs = parseInt(parsed.values.warmup ?? '1000', 10);
-  const rawArea = parsed.values['capture-area'];
-  const captureArea: Protocol.Page.StartScreenRecordingRequest['captureArea'] =
-    rawArea === 'browserWindow' ? 'browserWindow' : 'target';
-  const audio = parsed.values.audio ? true : !parsed.values['no-audio'];
-  const headless = parsed.values.headless || (!parsed.values.headed && platform() !== 'darwin');
-  const withDevTools = Boolean(parsed.values['with-devtools']);
-  const explicitChrome = parsed.values.chrome;
-
-  const extraArgs = [
-    '--enable-gpu-rasterization',
-    '--remote-allow-origins=devtools://devtools',
-  ];
-
-  const launched = await launchChrome({
-    explicitPath: explicitChrome,
-    width,
-    height,
-    headless,
-    audio,
-    extraArgs,
-    url,
-  });
-
-  try {
-    let recordTargetWs = launched.pageTargetWs;
-
-    if (withDevTools) {
-      const wsHost = launched.pageTargetWs.replace(/^ws:\/\//, '');
-      const inspectorUrl = `devtools://devtools/bundled/inspector.html?ws=${wsHost}`;
-      const browserSession = await connectCdpSession(launched.browserWsUrl);
-      const {targetId} = await browserSession.send('Target.createTarget', {url: inspectorUrl});
-      browserSession.close();
-      recordTargetWs = new URL(`/devtools/page/${targetId}`, launched.browserWsUrl).toString();
-    }
-
-    const session = await connectCdpSession(recordTargetWs);
-
-    try {
-      await session.send('Emulation.setDeviceMetricsOverride', {
-        width,
-        height,
-        deviceScaleFactor: 1,
-        mobile: false,
-      });
-    } catch {
-      // Ignore if unsupported on target.
-    }
-
-    if (warmupMs > 0) {
-      await new Promise(r => setTimeout(r, warmupMs));
-    }
-
-    const recorder = new CdpScreenRecorder(session);
-    await recorder.start({
-      frameRate,
-      audio,
-      maxWidth: width,
-      maxHeight: height,
-      captureArea,
-    });
-
-    await new Promise(r => setTimeout(r, durationMs));
-    const mp4Buffer = await recorder.stop();
-    session.close();
-
-    await writeFile(outPath, mp4Buffer);
-    console.log(`Saved ${outPath} (${mp4Buffer.byteLength.toLocaleString()} bytes, duration: ${durationMs}ms, ${width}x${height} @ ${frameRate}fps)`);
-  } finally {
-    await launched.close();
-  }
-  process.exit(0);
+export interface PlaywrightPageLike {
+  context(): {
+    newCDPSession(page: PlaywrightPageLike | PlaywrightPage): Promise<CdpSessionLike & {detach(): Promise<void>}>;
+  };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  cli().catch((err: Error) => {
-    console.error(err);
-    process.exit(1);
-  });
+export interface PuppeteerPageLike {
+  createCDPSession(): Promise<CdpSessionLike & {detach(): Promise<void>}>;
+}
+
+export interface ActiveRecording {
+  recorder: CdpScreenRecorder;
+  stop: (outPath?: string) => Promise<Buffer>;
+  [Symbol.asyncDispose]: () => Promise<void>;
+}
+
+/**
+ * Attaches a `CdpScreenRecorder` to a Playwright `Page` via `page.context().newCDPSession(page)`.
+ */
+export async function createPlaywrightRecorder(
+  page: PlaywrightPage | PlaywrightPageLike,
+  options: ScreenRecordingOptions = {},
+): Promise<{
+  recorder: CdpScreenRecorder;
+  stop: () => Promise<Buffer>;
+}> {
+  const cdpSession = await (page as {
+    context(): {
+      newCDPSession(page: PlaywrightPage | PlaywrightPageLike): Promise<CdpSessionLike & {detach(): Promise<void>}>;
+    };
+  }).context().newCDPSession(page);
+  const recorder = new CdpScreenRecorder(cdpSession);
+  await recorder.start(options);
+  return {
+    recorder,
+    async stop(): Promise<Buffer> {
+      try {
+        return await recorder.stop();
+      } finally {
+        await cdpSession.detach().catch(() => {});
+      }
+    },
+  };
+}
+
+/**
+ * Attaches a `CdpScreenRecorder` to a Puppeteer `Page` via `page.createCDPSession()`.
+ */
+export async function createPuppeteerRecorder(
+  page: PuppeteerPage | PuppeteerPageLike,
+  options: ScreenRecordingOptions = {},
+): Promise<{
+  recorder: CdpScreenRecorder;
+  stop: () => Promise<Buffer>;
+}> {
+  const cdpSession = await (page as PuppeteerPageLike).createCDPSession();
+  const recorder = new CdpScreenRecorder(cdpSession);
+  await recorder.start(options);
+  return {
+    recorder,
+    async stop(): Promise<Buffer> {
+      try {
+        return await recorder.stop();
+      } finally {
+        await cdpSession.detach().catch(() => {});
+      }
+    },
+  };
+}
+
+export type RecordingTarget =
+  | PlaywrightPage
+  | PlaywrightPageLike
+  | PuppeteerPage
+  | PuppeteerPageLike
+  | CdpSessionLike;
+
+/**
+ * Universal recording entrypoint supporting Playwright Page, Puppeteer Page, and raw CDP session.
+ * Returns an ActiveRecording handle compatible with `await using` (`Symbol.asyncDispose`).
+ */
+export async function startRecording(
+  target: RecordingTarget,
+  options: ScreenRecordingOptions = {},
+): Promise<ActiveRecording> {
+  let session: CdpSessionLike;
+  let detachSession: (() => Promise<void>) | undefined;
+
+  if (typeof target === 'object' && target !== null && 'context' in target && typeof (target as {context: () => {newCDPSession?: () => Promise<CdpSessionLike & {detach(): Promise<void>}>}}).context === 'function') {
+    const pwPage = target as PlaywrightPageLike;
+    const cdpSession = await pwPage.context().newCDPSession(pwPage);
+    session = cdpSession;
+    detachSession = () => cdpSession.detach().catch(() => {});
+  } else if (typeof target === 'object' && target !== null && 'createCDPSession' in target && typeof (target as {createCDPSession: () => Promise<CdpSessionLike & {detach(): Promise<void>}>}).createCDPSession === 'function') {
+    const pptrPage = target as PuppeteerPageLike;
+    const cdpSession = await pptrPage.createCDPSession();
+    session = cdpSession;
+    detachSession = () => cdpSession.detach().catch(() => {});
+  } else if (typeof target === 'object' && target !== null && 'send' in target && typeof (target as CdpSessionLike).send === 'function') {
+    session = target as CdpSessionLike;
+  } else {
+    throw new Error('Unsupported recording target: must be a Playwright Page, Puppeteer Page, or CDP session.');
+  }
+
+  const recorder = new CdpScreenRecorder(session);
+  await recorder.start(options);
+
+  let cachedBuffer: Buffer | undefined;
+  let stopped = false;
+  let stopPromise: Promise<Buffer> | undefined;
+
+  const stop = async (outPath?: string): Promise<Buffer> => {
+    if (cachedBuffer) {
+      if (outPath) {
+        await mkdir(dirname(outPath), {recursive: true});
+        await writeFile(outPath, cachedBuffer);
+      }
+      return cachedBuffer;
+    }
+
+    if (stopPromise) {
+      return stopPromise;
+    }
+
+    stopPromise = (async () => {
+      try {
+        if (!stopped) {
+          stopped = true;
+          cachedBuffer = await recorder.stop();
+        }
+      } finally {
+        if (detachSession) {
+          await detachSession();
+        }
+      }
+
+      const effectiveOutPath = outPath ?? options.outputPath;
+      if (effectiveOutPath && cachedBuffer) {
+        await mkdir(dirname(effectiveOutPath), {recursive: true});
+        await writeFile(effectiveOutPath, cachedBuffer);
+      }
+
+      return cachedBuffer ?? Buffer.alloc(0);
+    })();
+
+    return stopPromise;
+  };
+
+  return {
+    recorder,
+    stop,
+    async [Symbol.asyncDispose]() {
+      await stop();
+    },
+  };
 }

@@ -104,7 +104,7 @@ On a GPU-less Linux workstation where both Skia rasterization and `libaom-av1` e
 
 ## 6. Deep-Dive: VFR Timestamp Jitter, `VideoCaptureOracle` Phase-Lock & `rAF` Barcode Cadence
 
-Per-packet `ffprobe` PTS/DTS telemetry correlated against decoded 16-bit `rAF` barcodes via [`benchmarks/analyze_mp4.py`](./benchmarks/analyze_mp4.py) (Apple M4 Max · ProMotion 120Hz · Chrome `159.0.8149.0` Canary · FFmpeg `8.1`):
+Per-packet `ffprobe` PTS/DTS telemetry correlated against decoded 16-bit `rAF` barcodes via [`benchmarks/analyze-mp4.ts`](./analyze-mp4.ts) (Apple M4 Max · ProMotion 120Hz · Chrome `159.0.8149.0` Canary · FFmpeg `8.1`):
 
 | Stream (`Native VSync` unless noted) | Timebase | Bitrate (`kbps`) | Packets (`Unique`) | `dPTS` P05 / **P50** / P95 / Max (`ms`) | `dPTS` Stdev (`ms`) | `dRAF` Histogram (`{ΔrAF: count}`) | Boundary Anomalies Observed |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- | :--- |
@@ -133,7 +133,7 @@ Per-packet `ffprobe` PTS/DTS telemetry correlated against decoded 16-bit `rAF` b
 
 ## 7. `mpv` Playback Decode Cost, Drops & VSync Telemetry (`mpv v0.41.0`, Apple M4 Max)
 
-Measured via [`benchmarks/mpv_telemetry.lua`](./benchmarks/mpv_telemetry.lua) and [`benchmarks/run_mpv_bench.py`](./benchmarks/run_mpv_bench.py) across windowed ProMotion playback (`--vo=gpu-next`, `display-fps=120`) with default audio-clock sync vs `--video-sync=display-resample`, and untimed max-speed decode (`--vo=null --untimed`, measuring `file-loaded -> eof` wall time):
+Measured via [`benchmarks/mpv_telemetry.lua`](./mpv_telemetry.lua) and [`benchmarks/run-mpv-bench.ts`](./run-mpv-bench.ts) across windowed ProMotion playback (`--vo=gpu-next`, `display-fps=120`) with default audio-clock sync vs `--video-sync=display-resample`, and untimed max-speed decode (`--vo=null --untimed`, measuring `file-loaded -> eof` wall time):
 
 | Recording | `gpu-next + videotoolbox` (default sync) Drops (VO/Dec) | `gpu-next + videotoolbox` (`display-resample`) Drops / Delayed / Avg Jitter | `gpu-next + libdav1d (sw)` (`display-resample`) Drops / Delayed / Avg Jitter | `null --untimed` SW `libdav1d` Decode Time (**FPS**) | `null --untimed` HW `videotoolbox-copy` Time (**FPS**) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -152,7 +152,7 @@ Measured via [`benchmarks/mpv_telemetry.lua`](./benchmarks/mpv_telemetry.lua) an
 
 ## 8. Static Idle → Sudden 120Hz Burst → Static Idle VFR Behavior
 
-Tested via [`benchmarks/vfr_burst_test.py`](./benchmarks/vfr_burst_test.py) on a `5.0s` sequence (`1.5s` static idle → `2.0s` full-canvas 120Hz burst → `1.5s` static idle):
+Tested via [`benchmarks/vfr-burst-test.ts`](./vfr-burst-test.ts) on a `5.0s` sequence (`1.5s` static idle → `2.0s` full-canvas 120Hz burst → `1.5s` static idle):
 
 | Case | Total Packets (`end_raf`) | Idle Before (`0–1.5s`) | Burst Wakeup Latency & Cadence | Idle After (`3.5–5.0s`) | Keyframe Behavior & Size Adaptation | `mpv` Playback (`display-resample`) |
 | :--- | :---: | :---: | :--- | :--- | :--- | :--- |
@@ -164,9 +164,9 @@ Tested via [`benchmarks/vfr_burst_test.py`](./benchmarks/vfr_burst_test.py) on a
 
 ---
 
-## 9. `Page.startScreenRecording` vs. `tab-recorder.js` (`getDisplayMedia` + `MediaRecorder`)
+## 9. `Page.startScreenRecording` vs. In-Renderer `MediaRecorder` (`getDisplayMedia` + `MediaRecorder`)
 
-Comparing `Page.startScreenRecording` against in-renderer `navigator.mediaDevices.getDisplayMedia({preferCurrentTab: true})` + `MediaRecorder` ([`tab-recorder.js`](./tab-recorder.js), automated via [`benchmarks/compare_mediarecorder.mjs`](./benchmarks/compare_mediarecorder.mjs)) on the same `4.0s` 16-bit barcode workload:
+Comparing `Page.startScreenRecording` against in-renderer `navigator.mediaDevices.getDisplayMedia({preferCurrentTab: true})` + `MediaRecorder` (automated via [`benchmarks/compare-mediarecorder.ts`](./compare-mediarecorder.ts)) on the same `4.0s` 16-bit barcode workload:
 
 | Path & Config | Codec / Color | Bitrate (`kbps`) | Timebase | `dPTS` P50 / Max (`ms`) | `dPTS` Stdev (`ms`) | Unique `rAF` Frames (`dRAF` Hist) | GOP (`kf_indices`) | Finalize (`ms`) | `mpv` Drops (`gpu-next+dr`) |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -179,9 +179,9 @@ Comparing `Page.startScreenRecording` against in-renderer `navigator.mediaDevice
 | **CDP `4K@60`** | AV1 · `pc/srgb/p3` | `15,193.9` | `1/60000` | `16.65` / `18.15` | `1.26` | `241` (`{0:1,1:1,2:238,3:1}`) | `120` (`2.0s`) | `76.5` | `0 / 0` |
 | **MR `4K@60` VP9 (`15M`)** | VP9 · `tv/bt709` | `11,353.4` | `1/1000` | `17.00` / `19.00` | **`0.75`** | `239` (`{2:238}`) | `101` (`1.68s`) | `0.7` | `0 / 0` |
 
-### Takeaways: `Page.startScreenRecording` vs. `tab-recorder.js` (`MediaRecorder`)
+### Takeaways: `Page.startScreenRecording` vs. In-Renderer `MediaRecorder`
 
-* **Default `2.5 Mbps` Bitrate Trap in `tab-recorder.js`**: Leaving `videoBitsPerSecond` unset in [`tab-recorder.js`](./tab-recorder.js) caps VP9 at **`2.5 Mbps`** (`2,003.6 kbps` actual), causing `libvpx` rate-control frame drops (`8` jumps of `34ms` / `ΔrAF=4`, `stdev=3.90ms`). `Page.startScreenRecording` auto-scales bitrate cleanly (`5.86–15.19 Mbps`) with zero bitrate-starvation drops.
+* **Default `2.5 Mbps` Bitrate Trap in `MediaRecorder`**: Leaving `videoBitsPerSecond` unset in `MediaRecorder` caps VP9 at **`2.5 Mbps`** (`2,003.6 kbps` actual), causing `libvpx` rate-control frame drops (`8` jumps of `34ms` / `ΔrAF=4`, `stdev=3.90ms`). `Page.startScreenRecording` auto-scales bitrate cleanly (`5.86–15.19 Mbps`) with zero bitrate-starvation drops.
 * **Pacing & PTS Precision**: When given explicit bitrate headroom (`8–15 Mbps`), in-renderer `MediaRecorder` (`1/1000` WebM ms timestamps, or `1/120004` MP4 AV1) achieves slightly lower `dPTS` jitter (`0.39–0.75ms` stdev) and **no `pts=0` frame-0/1 collision or trailing stop-flush duplicate** (`239/239` or `480/480` clean frames, `0.4–1.4ms` `stop()` vs `21–77ms` CDP `IO.read` drain).
 * **Color Gamut, GOP Scaling & Lifecycle Isolation**: `Page.startScreenRecording` preserves **full-range sRGB / Display P3 (`pc/iec61966-2-1/smpte432`)**, scales GOP cleanly to **`2 * target_fps`**, runs completely out-of-process, and survives cross-origin navigations without user prompts or injected page script, whereas `MediaRecorder` clamps color metadata to **`tv/bt709`** and hardcodes a **`101`-frame GOP** (`0.84s` at 120fps).
 
@@ -191,7 +191,7 @@ Comparing `Page.startScreenRecording` against in-renderer `navigator.mediaDevice
 
 ### A. Which Chromium Capture Pipeline Should You Use?
 
-| Feature / Dimension | CDP `Page.startScreenRecording` ([`capture-cdp.ts`](./capture-cdp.ts)) | In-Renderer `getDisplayMedia` + `MediaRecorder` ([`tab-recorder.js`](./tab-recorder.js)) | Playwright `record_video_dir` (`Page.startScreencast`) |
+| Feature / Dimension | CDP `Page.startScreenRecording` ([`src/cli.ts`](../src/cli.ts) / [`src/index.ts`](../src/index.ts)) | In-Renderer `getDisplayMedia` + `MediaRecorder` ([`benchmarks/compare-mediarecorder.ts`](./compare-mediarecorder.ts)) | Playwright `record_video_dir` (`Page.startScreencast`) |
 | :--- | :--- | :--- | :--- |
 | **Capture Layer** | Browser Process (`WebContentsVideoCaptureDevice` -> shared-memory `I420` -> utility process `libaom-av1` + `Opus`) | Renderer Process (`FrameSinkVideoCaptureDevice` -> Blink `MediaStreamTrack` -> `MediaRecorder`) | Browser JPEG (`q=90`) -> Base64 JSON over CDP WebSocket -> Node.js `image2pipe` -> `ffmpeg -threads 1` |
 | **Max Verified Real-Time Throughput (M4 Max ProMotion)** | **`1080p @ 120.2 fps`**, **`1080p @ 89.4 fps`**, **`4K @ 60.2 fps`** | **`1080p @ 120 fps`**, **`4K @ 60 fps`** *(requires `videoBitsPerSecond >= 8M–15M`)* | Hard-capped at **`25 fps` container** / **`~12–21 unique fps`** (`35ms` `FrameThrottler` ACK cap) |
@@ -217,5 +217,5 @@ Comparing `Page.startScreenRecording` against in-renderer `navigator.mediaDevice
    * `Page.startScreenRecording` is true **VFR (Variable Frame Rate)**: static UI regions emit **0 packets for 1.2–1.5s** and wake up on the very first damaged `rAF` frame (`barcode=1`) as a compact P-frame.
    * Under heavy load (`4K@60`), packets `#0` and `#1` can both carry `pts=0.000ms`, and `Page.stopScreenRecording` always flushes one trailing duplicate frame (`dRAF=0`) with a short `dPTS` (`1–10ms`).
    * For smooth playback of `1080p@120` / `4K@60` VFR streams in `mpv`, pass `--vo=gpu-next --video-sync=display-resample` (eliminates VO drops). When extracting raw frames with `ffmpeg`, use `-fps_mode passthrough` (or `-vsync 0`).
-5. **If using `MediaRecorder` ([`tab-recorder.js`](./tab-recorder.js)), always set `videoBitsPerSecond`**:
+5. **If using `MediaRecorder` ([`benchmarks/compare-mediarecorder.ts`](./compare-mediarecorder.ts)), always set `videoBitsPerSecond`**:
    * Chromium's `MediaRecorder` defaults to `2_500_000` (`2.5 Mbps`), which causes `libvpx` rate-control frame drops at `1080p@60+`. Set `videoBitsPerSecond: 8_000_000` (`8 Mbps`) for `1080p@60`, `12_000_000` (`12 Mbps`) for `1080p@120`, and `15_000_000` (`15 Mbps`) for `4K@60`.
