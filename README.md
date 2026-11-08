@@ -39,6 +39,7 @@ The CLI records audio by default and runs headless (`--headless=new`) for `<= 60
 ```ts
 import {startRecording} from 'chrome-capture';
 
+// `page` can be a Playwright Page, a Puppeteer Page, or a CDP session
 {
   await using rec = await startRecording(page, {
     outputPath: 'flow.mp4',   // optional: omit to get a Buffer from rec.stop()
@@ -104,6 +105,7 @@ Video files can lie about fps (a 120fps container full of duplicate frames is st
 
 * **Mac (`--headless=new`)**: **4K @ 60fps** (60 unique fps). Headless Chrome still gets full Metal GPU acceleration, so 1080p, 1440p, and 4K all lock at 60fps, but headless drives `rAF` from a synthetic 60Hz timer instead of the display's `CVDisplayLink`.
 * **Mac (`--headful` on 120Hz ProMotion)**: **1080p @ 120fps** and **4K @ 120fps** (`119.9 fps`, 59.8 Mbps AV1 + stereo Opus on Three.js/WebGL2 scenes in [`examples/capture-demos.ts`](./examples/capture-demos.ts)).
-* **Headless Linux (no GPU, CPU-only CI/Cloudtop)**: **1080p @ 60fps** (60.4 unique fps) or **1440p @ 60fps** (~58 unique fps) on standard 60Hz vsync, and up to **1080p @ 75-83fps** if you uncap vsync (`--disable-frame-rate-limit --disable-gpu-vsync`).
+* **Headless Linux (no GPU / CI)**: **1080p @ 60fps** (60.4 unique fps) or **1440p @ 60fps** (~58 unique fps) on standard 60Hz vsync, and up to **1080p @ 75-83fps** if you uncap vsync (`--disable-frame-rate-limit --disable-gpu-vsync`).
+* **Other setups (Windows / Linux w/ discrete GPU)**: ?
 
 One macOS gotcha: don't pass `--disable-frame-rate-limit --disable-gpu-vsync` on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the Metal command queue, and starves the capture readback (dropping 4K@60 to 0.3fps). Leave native vsync alone; it's what gets you to 120.
