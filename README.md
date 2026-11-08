@@ -102,8 +102,9 @@ So.. 2.4x the frames, in a smaller file, at better quality, and the run finishes
 
 Video files can lie about fps (a 120fps container full of duplicate frames is still a 60fps video). So the stress test ([demo](https://paulirish.github.io/chrome-capture/)) draws a binary frame counter on every `requestAnimationFrame`, then decodes it back out of the mp4 to count unique frames.
 
-On a 120Hz ProMotion display:
+On a 120Hz ProMotion M4 Max:
 * `4K @ 60fps`: 60 unique frames/sec (both `--headless` and `--headful`)
-* `1080p @ 120fps`: 120 unique frames/sec with `--headful`. (`--headless=new` on macOS still gets full Metal GPU acceleration for 4K@60, but ticks `rAF` from a 60Hz timer instead of the 120Hz `CVDisplayLink`.)
+* `1080p @ 120fps`: 120 unique frames/sec with `--headful` (`--headless=new` on macOS still gets full Metal GPU acceleration for 4K@60, but ticks `rAF` from a 60Hz timer instead of the 120Hz `CVDisplayLink`).
+* `4K @ 120fps`: 120 frames/sec (`1,439` frames in 12.0s at 59.8 Mbps AV1 + stereo Opus) on a GPU-bound Three.js/WebGL2 scene ([`examples/capture-demos.ts`](./examples/capture-demos.ts)).
 
 One macOS gotcha: it's tempting to pass `--disable-frame-rate-limit --disable-gpu-vsync`, but don't do it on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the GPU command queue, and starves the capture readback (dropping 4K@60 to 0.3fps). Leave native vsync alone; it's what gets you to 120.

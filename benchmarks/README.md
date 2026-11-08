@@ -104,14 +104,18 @@ Running the same 9-case matrix with `node benchmarks/stress-test-barcode.ts --he
 
 ### C. Real-World 3D WebGL2 + Web Audio Showcase (`examples/capture-demos.ts`, M4 Max `--headful`)
 
-Recorded at `1920x1080` (`deviceScaleFactor: 1`) with 48kHz stereo Opus audio on two production Three.js / WebGL2 scenes ([`senna-800kg`](https://sam1983aing.github.io/senna-800kg/) — 364k-vertex Draco McLaren Senna, 56 CFD streamlines, 276-mesh explosion, procedural flat-plane V8 synth; and [`ticket-tear`](https://sam1983aing.github.io/ticket-tear/) — 900-particle / 2,540-spring Verlet paper physics, holographic GLSL foil, and procedural fiber-rip synthesis):
+Recorded at `1920x1080` and `3840x2160` (4K) (`deviceScaleFactor: 1`) with 48kHz stereo Opus audio on two production Three.js / WebGL2 scenes ([`senna-800kg`](https://sam1983aing.github.io/senna-800kg/) — 364k-vertex Draco McLaren Senna, 56 CFD streamlines, 276-mesh explosion, procedural flat-plane V8 synth; and [`ticket-tear`](https://sam1983aing.github.io/ticket-tear/) — 900-particle / 2,540-spring Verlet paper physics, holographic GLSL foil, and procedural fiber-rip synthesis):
 
-| Demo (`1920x1080`, `deviceScaleFactor: 1`) | Target FPS | In-Page `rAF` FPS | MP4 Container FPS (`av1`) | Frames (`rAF` / MP4) | Frame $\Delta t$ (`p50` / `p95`) | Audio (`48kHz` stereo) | Bitrate | File Size |
+| Demo & Resolution (`deviceScaleFactor: 1`) | Target FPS | In-Page `rAF` FPS | MP4 Container FPS (`av1`) | Frames (`rAF` / MP4) | Frame $\Delta t$ (`p50` / `p95`) | Audio (`48kHz` stereo) | Bitrate | File Size |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Senna 800KG** (`12.0s`, 6-act spline) | `90` | **`118.3 fps`** | **`89.3 fps`** | `1,421 / 1,075` | `8.3ms / 9.2ms` | `opus` (`597` pkts) | `12.95 Mbps` | `18.58 MB` |
-| **Ticket Tear** (`10.0s`, Verlet tear) | `90` | **`117.9 fps`** | **`87.2 fps`** | `1,179 / 877` | `8.3ms / 9.2ms` | `opus` (`501` pkts) | `12.20 Mbps` | `14.64 MB` |
-| **Senna 800KG** (`12.0s`, 6-act spline) | **`120`** | **`119.9 fps`** | **`120.2 fps`** | **`1,440 / 1,441`** | `8.3ms / 9.2ms` | `opus` (`597` pkts) | `16.39 Mbps` | `23.43 MB` |
-| **Ticket Tear** (`10.0s`, Verlet tear) | **`120`** | **`120.1 fps`** | **`112.3 fps`** | `1,201 / 1,130` | `8.3ms / 9.1ms` | `opus` (`501` pkts) | `14.86 Mbps` | `17.82 MB` |
+| **Senna 800KG `1080p`** (`12.0s`, 6-act spline) | `90` | **`118.3 fps`** | **`89.3 fps`** | `1,421 / 1,075` | `8.3ms / 9.2ms` | `opus` (`597` pkts) | `12.95 Mbps` | `18.58 MB` |
+| **Ticket Tear `1080p`** (`10.0s`, Verlet tear) | `90` | **`117.9 fps`** | **`87.2 fps`** | `1,179 / 877` | `8.3ms / 9.2ms` | `opus` (`501` pkts) | `12.20 Mbps` | `14.64 MB` |
+| **Senna 800KG `1080p`** (`12.0s`, 6-act spline) | **`120`** | **`119.9 fps`** | **`120.2 fps`** | **`1,440 / 1,441`** | `8.3ms / 9.2ms` | `opus` (`597` pkts) | `16.39 Mbps` | `23.43 MB` |
+| **Ticket Tear `1080p`** (`10.0s`, Verlet tear) | **`120`** | **`120.1 fps`** | **`112.3 fps`** | `1,201 / 1,130` | `8.3ms / 9.1ms` | `opus` (`501` pkts) | `14.86 Mbps` | `17.82 MB` |
+| **Senna 800KG `4K (3840x2160)`** (`12.0s`) | `90` | `120.0 fps` | **`89.6 fps`** | `1,075` pkts | `8.3ms` | `opus` | `45.1 Mbps` | ~`64.7 MB` |
+| **Ticket Tear `4K (3840x2160)`** (`10.0s`) | `90` | `120.0 fps` | **`85.4 fps`** | `854` pkts | `8.3ms` | `opus` | `43.8 Mbps` | ~`52.4 MB` |
+| **Senna 800KG `4K (3840x2160)`** (`12.0s`) | **`120`** | `120.0 fps` | **`119.9 fps`** | **`1,439` pkts** | `8.3ms` | `opus` | `59.8 Mbps` | ~`85.5 MB` |
+| **Ticket Tear `4K (3840x2160)`** (`10.0s`) | **`120`** | `120.0 fps` | **`114.7 fps`** | `1,147` pkts | `8.3ms` | `opus` | `57.9 Mbps` | ~`69.2 MB` |
 
 ---
 
@@ -177,6 +181,22 @@ Measured via [`benchmarks/mpv_telemetry.lua`](./mpv_telemetry.lua) and [`benchma
 * **`decoder-frame-drop-count` is `0` everywhere**: Neither Apple `videotoolbox` AV1 hardware decode nor `libdav1d` software decode ever drops a frame up to `4K@60` and `1080p@120`.
 * **`--video-sync=display-resample` eliminates `1080p@120` presentation drops**: Default audio-clock sync drops `12` VO frames on `1080p@120` when VFR packet jitter collides with `120Hz` ProMotion vsyncs; `--video-sync=display-resample` with `videotoolbox` drops `0` frames on `1080p@90`, `1080p@120`, `4K@30`, and `4K@60`.
 * **`libdav1d` software decode hits `509 fps` at `4K@60` (`8.5x` realtime) and `1,589 fps` at `1080p@120` (`13.2x` realtime)**: Note that `--vo=null` forces `videotoolbox-copy` CPU readback (`134–394 fps`), whereas `--vo=gpu-next` uses zero-copy `videotoolbox` `IOSurface`.
+
+### `4K (3840x2160) @ 90fps & 120fps` Playback (`libdav1d` vs. `videotoolbox`, Windowed vs. Fullscreen)
+
+At `4K @ 120fps` (~`58–60 Mbps` AV1), Apple's hardware `videotoolbox` AV1 engine tops out around **`145–153 fps`** (~`6.6 ms/frame`, close to the `8.33 ms` 120Hz VSync budget), whereas multi-threaded **`libdav1d` (`--hwdec=no`)** on M4 Max decodes at **`495–582 fps`** (`4.1x–4.9x` realtime, ~`1.8 ms/frame`), dropping only **`1–2` VO frames out of `1,439` (`0.14%`)**:
+
+| Recording (`3840x2160` AV1) | `gpu-next + videotoolbox` (default sync) Drops (VO / Dec) | `gpu-next + videotoolbox` (`display-resample`) Drops / Delayed / Jitter | `gpu-next + libdav1d (sw)` (`display-resample`) Drops / Delayed / Jitter | `null --untimed` SW `libdav1d` Decode Time (**FPS**) | `null --untimed` HW `videotoolbox-copy` Time (**FPS**) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Senna 800KG `4K@90`** (`1,075` frames, `45.1 Mbps`) | `39 / 0` | `6 / 0` · `1` del · `0.076` | **`3 / 0`** · `1` del · **`0.058`** | **`2.18 s` (`493 fps`)** | `7.33 s` (`147 fps`) |
+| **Ticket Tear `4K@90`** (`854` frames, `43.8 Mbps`) | `19 / 0` | **`2 / 0`** · `1` del · **`0.056`** | **`2 / 0`** · `4` del · `0.062` | **`1.50 s` (`571 fps`)** | `5.60 s` (`152 fps`) |
+| **Senna 800KG `4K@120`** (`1,439` frames, `59.8 Mbps`) | `42 / 0` | `7 / 0` · `2` del · `0.073` | **`2 / 0`** · `1` del · **`0.047`** | **`2.91 s` (`495 fps`)** | `9.90 s` (`145 fps`) |
+| **Ticket Tear `4K@120`** (`1,147` frames, `57.9 Mbps`) | `45 / 0` | `9 / 0` · `0` del · `0.073` | **`2 / 0`** · `0` del · **`0.065`** | **`1.97 s` (`582 fps`)** | `7.51 s` (`153 fps`) |
+
+For visual fullscreen playback of `4K @ 120fps` on macOS ProMotion (`CAMetalLayer` direct-to-display scanout, `1–2` drops across `1,439` frames):
+```bash
+mpv --vo=gpu-next --video-sync=display-resample --hwdec=no --fs recordings/senna-800kg-3840x2160-120fps.mp4
+```
 
 ---
 
