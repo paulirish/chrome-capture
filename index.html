@@ -24,11 +24,19 @@
 (() => {
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d', { alpha: false });
-  const W = window.innerWidth;
-  const H = window.innerHeight;
-  const dpr = window.devicePixelRatio || 1;
+  let W = window.innerWidth;
+  let H = window.innerHeight;
+  let dpr = window.devicePixelRatio || 1;
   canvas.width = W;
   canvas.height = H;
+
+  window.addEventListener('resize', () => {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = W;
+    canvas.height = H;
+  });
 
   window.__rafCount = 0;
   window.__startTime = performance.now();
@@ -37,14 +45,43 @@
   const BLOCK_W = 24;
   const BLOCK_H = 32;
 
-  // Frame timing history buffer for sparkline / jitter strip
-  const HISTORY_LEN = 180;
+  // Rolling 240-frame window for percentiles (p50/p95/p99) and deviation strip
+  const HISTORY_LEN = 240;
   const deltaHistory = new Float32Array(HISTORY_LEN);
   let historyIdx = 0;
-  let minDelta = 999.0;
-  let maxDelta = 0.0;
-  let deltaSum = 0.0;
-  let deltaCount = 0;
+  let historyCount = 0;
+
+  const STANDARD_REFRESH_RATES = [240, 165, 144, 120, 90, 75, 60, 48, 30];
+
+  function fmtMs(val, signed = false) {
+    const abs = Math.abs(val);
+    const str = abs >= 100 ? Math.min(999.9, abs).toFixed(1) : abs.toFixed(2);
+    if (!signed) return str.padStart(5, ' ');
+    return ((val >= 0 ? '+' : '-') + str).padStart(6, ' ');
+  }
+
+  const sortBuf = new Float32Array(HISTORY_LEN);
+
+  function percentileSorted(sorted, p) {
+    if (sorted.length === 0) return 0;
+    const k = (sorted.length - 1) * (p / 100);
+    const lo = Math.floor(k);
+    const hi = Math.ceil(k);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (k - lo);
+  }
+
+  function resolveBaseline(p50) {
+    if (p50 <= 0) return { dt: 16.667, hzLabel: '60Hz' };
+    for (const hz of STANDARD_REFRESH_RATES) {
+      const target = 1000 / hz;
+      if (Math.abs(p50 - target) / target <= 0.025) {
+        return { dt: target, hzLabel: hz + 'Hz' };
+      }
+    }
+    const estHz = Math.round(1000 / p50);
+    return { dt: p50, hzLabel: Math.min(999, estHz) + 'Hz' };
+  }
 
   // 1. HARD INVARIANT: Draw top-left 18-block barcode
   function drawBarcode(frameIdx) {
@@ -128,8 +165,8 @@
     ctx.restore();
   }
 
-  // 3. Real-Time Delta-T Sparkline / Frame Pacing Strip
-  function drawFrameTimingSparkline(x, y, w, h, currentDt) {
+  // 3. Centered Delta-T Jitter / Deviation Strip (TestUFO-style ±ms around baseline)
+  function drawFrameTimingDeviation(x, y, w, h, currentDt, baseline) {
     ctx.save();
     ctx.fillStyle = 'rgba(12, 19, 34, 0.85)';
     ctx.fillRect(x, y, w, h);
@@ -137,61 +174,89 @@
     ctx.strokeStyle = '#1e293b';
     ctx.strokeRect(x, y, w, h);
 
-    // Target threshold lines: 120Hz (8.33ms), 90Hz (11.11ms), 60Hz (16.67ms), 30Hz (33.33ms)
-    // Scale: 0ms at bottom (y + h), 40ms at top (y)
-    const maxScaleMs = 40.0;
-    const targets = [
-      { hz: '120Hz', dt: 8.33, color: '#38bdf8' },
-      { hz: '90Hz',  dt: 11.11, color: '#34d399' },
-      { hz: '60Hz',  dt: 16.67, color: '#facc15' },
-      { hz: '30Hz',  dt: 33.33, color: '#f87171' },
-    ];
-
-    ctx.font = 'bold 10px monospace';
+    // Header row (fixed-width strings so text never shifts horizontally)
+    ctx.font = 'bold 11px monospace';
+    ctx.fillStyle = '#94a3b8';
     ctx.textAlign = 'left';
-    for (const t of targets) {
-      const lineY = y + h - (t.dt / maxScaleMs) * h;
-      if (lineY >= y && lineY <= y + h) {
-        ctx.beginPath();
-        ctx.setLineDash([4, 4]);
-        ctx.moveTo(x, lineY);
-        ctx.lineTo(x + w, lineY);
-        ctx.strokeStyle = t.color + '55';
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = t.color;
-        ctx.fillText(t.hz + ' (' + t.dt.toFixed(1) + 'ms)', x + 8, lineY - 3);
-      }
-    }
+    ctx.fillText('rAF JITTER vs ' + baseline.dt.toFixed(2) + 'ms (' + baseline.hzLabel + ')', x + 10, y + 15);
 
-    // Draw historical delta bars
-    const barW = Math.max(1, w / HISTORY_LEN);
-    for (let i = 0; i < HISTORY_LEN; i++) {
-      const idx = (historyIdx + i) % HISTORY_LEN;
-      const dt = deltaHistory[idx];
-      if (dt <= 0) continue;
-      const barH = Math.min(h, (dt / maxScaleMs) * h);
-      const barX = x + i * barW;
-      const barY = y + h - barH;
+    ctx.fillStyle = '#e2e8f0';
+    ctx.textAlign = 'right';
+    ctx.fillText('Δt: ' + fmtMs(currentDt) + 'ms  (' + fmtMs(currentDt - baseline.dt, true) + 'ms)', x + w - 10, y + 15);
 
-      // Color coding: green <= 9ms (120Hz), teal <= 12ms (90Hz), yellow <= 18ms (60Hz), red > 18ms
-      if (dt <= 9.0) {
-        ctx.fillStyle = '#38bdf8';
-      } else if (dt <= 12.0) {
-        ctx.fillStyle = '#34d399';
-      } else if (dt <= 18.0) {
-        ctx.fillStyle = '#fbbf24';
+    const plotX = x + 48;
+    const plotY = y + 24;
+    const plotW = Math.max(40, w - 58);
+    const plotH = Math.max(20, h - 32);
+    const midY = plotY + plotH / 2;
+    const halfScaleMs = baseline.dt <= 10.5 ? 12 : 20;
+
+    // Guide lines: ±halfScale, ±halfScale/2, and 0ms center
+    ctx.strokeStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.moveTo(plotX, plotY);
+    ctx.lineTo(plotX + plotW, plotY);
+    ctx.moveTo(plotX, plotY + plotH);
+    ctx.lineTo(plotX + plotW, plotY + plotH);
+    ctx.stroke();
+
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = '#334155';
+    ctx.beginPath();
+    ctx.moveTo(plotX, plotY + plotH * 0.25);
+    ctx.lineTo(plotX + plotW, plotY + plotH * 0.25);
+    ctx.moveTo(plotX, plotY + plotH * 0.75);
+    ctx.lineTo(plotX + plotW, plotY + plotH * 0.75);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = '#475569';
+    ctx.beginPath();
+    ctx.moveTo(plotX, midY);
+    ctx.lineTo(plotX + plotW, midY);
+    ctx.stroke();
+
+    // Axis labels in dedicated left gutter
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('+' + halfScaleMs + 'ms', x + 42, plotY + 6);
+    ctx.fillText('0ms', x + 42, midY + 3);
+    ctx.fillText('-' + halfScaleMs + 'ms', x + 42, plotY + plotH);
+
+    // Signed deviation bars scrolling right-to-left
+    const barStep = plotW / HISTORY_LEN;
+    for (let i = 0; i < historyCount; i++) {
+      const slot = HISTORY_LEN - historyCount + i;
+      const idx = (historyIdx - historyCount + i + HISTORY_LEN) % HISTORY_LEN;
+      const sampleDt = deltaHistory[idx];
+      const err = sampleDt - baseline.dt;
+      const clamped = Math.max(-halfScaleMs, Math.min(halfScaleMs, err));
+      const px = (clamped / halfScaleMs) * (plotH / 2);
+      const ratio = Math.abs(err) / baseline.dt;
+
+      if (ratio < 0.08) {
+        ctx.fillStyle = '#22c55e';
+      } else if (ratio < 0.22) {
+        ctx.fillStyle = '#facc15';
+      } else if (ratio < 0.55) {
+        ctx.fillStyle = '#fb923c';
       } else {
         ctx.fillStyle = '#f87171';
       }
-      ctx.fillRect(barX, barY, Math.max(1, barW - 0.5), barH);
+
+      const x0 = Math.round(plotX + slot * barStep);
+      const x1 = Math.round(plotX + (slot + 1) * barStep);
+      const bw = Math.max(1, x1 - x0);
+      if (Math.abs(px) < 1.5) {
+        ctx.fillRect(x0, midY - 1, bw, 2);
+      } else if (px > 0) {
+        ctx.fillRect(x0, midY - px, bw, px);
+      } else {
+        ctx.fillRect(x0, midY, bw, -px);
+      }
     }
 
-    // Sparkline title
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 11px monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText('FRAME TIME: ' + currentDt.toFixed(2) + ' ms', x + w - 8, y + 14);
     ctx.restore();
   }
 
@@ -242,7 +307,7 @@
   }
 
   // 5. Dynamic Moving Stress Elements (smooth multi-speed scrolling)
-  function drawStressMotion(f, hue1) {
+  function drawStressMotion(f, hue1, hudAreaRight, hudAreaBottom) {
     const startY = BLOCK_H + 20;
     const bannerY = H - 36;
     const motionH = Math.max(120, H - startY - 260);
@@ -255,15 +320,13 @@
     ctx.fillRect(0, startY, W, H - startY);
 
     // Dynamic floating velocity bars across canvas (restricted to open areas to keep HUD & graphs pristine)
-    const hudAreaRight = Math.min(620, W - 20);
-    const hudAreaBottom = startY + 300;
     for (let i = 0; i < 14; i++) {
       const speed = 6 + i * 2.5;
       const bx = ((f * speed + i * 197) % (W + 260)) - 130;
       // Position bars either below HUD/telemetry area or in right half of screen
       let by = startY + 20 + ((i * 47) % Math.max(80, motionH - 50));
       if (bx < hudAreaRight && by < hudAreaBottom) {
-        by += hudAreaBottom - startY;
+        by = hudAreaBottom + (by - startY);
       }
       if (by + 30 > bannerY - 14) {
         by = bannerY - 50;
@@ -279,7 +342,7 @@
     // High-speed horizontally scrolling text banner (tests temporal motion smearing)
     ctx.fillStyle = '#090d16';
     ctx.fillRect(0, bannerY - 14, W, 40);
-    const scrollText = 'PROMOTION 120HZ VSYNC BENCHMARK - TESTING AV1 HARDWARE ENCODING & CDP SCREEN RECORDING FIDELITY - FRAME ' + f + ' - ';
+    const scrollText = 'PROMOTION 120HZ VSYNC BENCHMARK - TESTING AV1 HARDWARE ENCODING & CDP SCREEN RECORDING FIDELITY - FRAME ' + String(f).padStart(6, '0') + ' - ';
     const textW = 1200;
     const textX = -((f * 12) % textW);
     ctx.fillStyle = '#38bdf8';
@@ -296,30 +359,56 @@
     const dt = Math.max(0.1, now - lastNow);
     lastNow = now;
 
-    // Timing stats
-    deltaHistory[historyIdx] = dt;
-    historyIdx = (historyIdx + 1) % HISTORY_LEN;
-    if (f > 10) {
-      minDelta = Math.min(minDelta, dt);
-      maxDelta = Math.max(maxDelta, dt);
-      deltaSum += dt;
-      deltaCount++;
+    // Frame 1 compares against script-init performance.now(); record inter-rAF deltas from frame 2 onward.
+    if (f > 1) {
+      deltaHistory[historyIdx] = dt;
+      historyIdx = (historyIdx + 1) % HISTORY_LEN;
+      if (historyCount < HISTORY_LEN) historyCount++;
     }
-    const avgDelta = deltaCount > 0 ? (deltaSum / deltaCount) : dt;
-    const jitter = Math.abs(dt - avgDelta);
+
+    let windowSum = 0;
+    for (let i = 0; i < historyCount; i++) {
+      const v = deltaHistory[i];
+      sortBuf[i] = v;
+      windowSum += v;
+    }
+    const sorted = sortBuf.subarray(0, historyCount);
+    sorted.sort();
+
+    const p50 = historyCount > 0 ? percentileSorted(sorted, 50) : 0;
+    const p95 = historyCount > 0 ? percentileSorted(sorted, 95) : 0;
+    const p99 = historyCount > 0 ? percentileSorted(sorted, 99) : 0;
+    const baseline = resolveBaseline(p50);
 
     const elapsed = (now - window.__startTime) / 1000;
-    const rollingFps = elapsed > 0 ? (f / elapsed).toFixed(1) : '0.0';
+    const rollingFpsNum = windowSum > 0 ? (1000 * historyCount) / windowSum : 0;
+    const rollingFps = Math.min(999.9, rollingFpsNum).toFixed(1).padStart(5, ' ');
     const hue1 = (f * 2.5) % 360;
 
-    // Draw dynamic background & moving motion stress elements
-    drawStressMotion(f, hue1);
-
-    // Live Telemetry HUD Panel
+    // Layout coordinates
     const hudW = Math.min(580, W - 48);
     const hudH = 148;
     const hudX = 24;
     const hudY = BLOCK_H + 24;
+    const sparkW = hudW;
+    const sparkH = 104;
+    const sparkX = 24;
+    const sparkY = hudY + hudH + 16;
+    const chromaW = hudW;
+    const chromaH = 22;
+    const chromaX = 24;
+    const chromaY = sparkY + sparkH + 16;
+
+    const strobeRadius = 58;
+    const strobeX = Math.min(W - strobeRadius - 32, hudX + hudW + strobeRadius + 36);
+    const strobeY = hudY + strobeRadius + 8;
+    const showStrobe = strobeX - strobeRadius > hudX + hudW + 10 && strobeX + strobeRadius < W;
+    const hudAreaRight = showStrobe ? strobeX + strobeRadius + 24 : hudX + hudW + 20;
+
+    // Draw dynamic background & moving motion stress elements
+    drawStressMotion(f, hue1, hudAreaRight, chromaY + chromaH + 24);
+
+    // Live Telemetry HUD Panel
     ctx.save();
     ctx.fillStyle = 'rgba(6, 10, 20, 0.88)';
     ctx.fillRect(hudX, hudY, hudW, hudH);
@@ -329,7 +418,7 @@
 
     ctx.fillStyle = '#f8fafc';
     ctx.font = 'bold 20px monospace';
-    ctx.fillText('rAF FRAME: #' + f + ' (0x' + f.toString(16).toUpperCase().padStart(4, '0') + ')', hudX + 16, hudY + 28);
+    ctx.fillText('rAF FRAME: #' + String(f).padStart(6, '0') + ' (0x' + f.toString(16).toUpperCase().padStart(4, '0') + ')', hudX + 16, hudY + 28);
 
     // 16-bit binary display matching barcode
     const binStr = (f & 0xffff).toString(2).padStart(16, '0');
@@ -339,36 +428,29 @@
 
     ctx.fillStyle = '#38bdf8';
     ctx.font = 'bold 15px monospace';
-    ctx.fillText('IN-PAGE rAF: ' + rollingFps + ' FPS  |  t = ' + elapsed.toFixed(2) + 's', hudX + 16, hudY + 76);
+    ctx.fillText('IN-PAGE rAF: ' + rollingFps + ' FPS  |  t = ' + Math.min(9999.99, elapsed).toFixed(2).padStart(7, ' ') + 's', hudX + 16, hudY + 76);
 
     ctx.fillStyle = '#e2e8f0';
     ctx.font = '13px monospace';
-    ctx.fillText('Δt: ' + dt.toFixed(2) + 'ms (min: ' + minDelta.toFixed(1) + ' / max: ' + maxDelta.toFixed(1) + ' / j: ' + jitter.toFixed(2) + 'ms)', hudX + 16, hudY + 102);
+    ctx.fillText(
+      'Δt: ' + fmtMs(dt) + 'ms  (p50: ' + fmtMs(p50) + ' / p95: ' + fmtMs(p95) + ' / p99: ' + fmtMs(p99) + 'ms)',
+      hudX + 16,
+      hudY + 102,
+    );
 
     ctx.fillStyle = '#a7f3d0';
     ctx.fillText('VIEWPORT: ' + W + 'x' + H + ' (dpr: ' + dpr + ')', hudX + 16, hudY + 128);
     ctx.restore();
 
     // VSync Strobe Dial (placed to the right of the HUD if space permits)
-    const strobeRadius = 58;
-    const strobeX = Math.min(W - strobeRadius - 32, hudX + hudW + strobeRadius + 36);
-    const strobeY = hudY + strobeRadius + 8;
-    if (strobeX - strobeRadius > hudX + hudW + 10 && strobeX + strobeRadius < W) {
+    if (showStrobe) {
       drawStrobeDial(strobeX, strobeY, strobeRadius, f);
     }
 
-    // Frame-timing sparkline / jitter strip
-    const sparkW = Math.min(580, W - 48);
-    const sparkH = 74;
-    const sparkX = 24;
-    const sparkY = hudY + hudH + 16;
-    drawFrameTimingSparkline(sparkX, sparkY, sparkW, sparkH, dt);
+    // Centered frame-timing deviation strip (TestUFO-style ±ms around baseline)
+    drawFrameTimingDeviation(sparkX, sparkY, sparkW, sparkH, dt, baseline);
 
     // Chroma / Luma subsampling & 8-bit banding inspection strip
-    const chromaW = Math.min(580, W - 48);
-    const chromaH = 22;
-    const chromaX = 24;
-    const chromaY = sparkY + sparkH + 16;
     drawChromaSharpness(chromaX, chromaY, chromaW, chromaH);
 
     // Top-left 18-block 16-bit barcode (always drawn last on top)
