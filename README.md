@@ -21,6 +21,8 @@ _(Thx [github.com/Sam1983Aing/senna-800kg](https://github.com/Sam1983Aing/senna-
 
 Puppeteer v25.10+ wraps this in an experimental `page.record()` (deprecating `page.screencast()`). Playwright is still on `Page.startScreencast` (plus [recent](https://github.com/microsoft/playwright/pull/42929) [upgrades](https://github.com/microsoft/playwright/pull/42752)), but I suspect they'll [get on this](https://github.com/microsoft/playwright/issues/43999) pretty soon…
 
+Feel free to install this from npm.. or tbh just point your agent at [`src/index.ts`](./src/index.ts) and steal the implementation. It's tiny.
+
 ## CLI
 
 ```bash
