@@ -10,7 +10,7 @@ npx chrome-capture https://paulirish.github.io/chrome-capture/ demo.mp4 4s
 
 For the past ~decade, [`Page.startScreencast`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast) was the only way to get video frames out of CDP. That API is from ~2013, built so DevTools could show a live preview of a USB-tethered Android. (So good!) Both Playwright (`recordVideo`) and Puppeteer (`page.screencast()`) built their video capture on top of it: Chrome JPEG-encodes each frame, base64s it into JSON over CDP, waits for an ack, and the library pipes those JPEGs into `ffmpeg`. It's served us well.
 
-In Sept 2026… the new [`Page.startScreenRecording`](https://chromium-review.googlesource.com/c/chromium/src/+/7736461) landed. Frames go **straight from the compositor** to an out-of-process encoder over shared memory, and Chrome **writes AV1 into the mp4** as it goes (plus optional tab audio). 💅 Stopping is ~instant because the encoding is already done (no multi-second `ffmpeg` flush on `context.close()`). And you can start/stop recording whenever you want: log in, warm up the page, then record just the interaction.
+In Sept 2026… the new [`Page.startScreenRecording`](https://chromium-review.googlesource.com/c/chromium/src/+/7736461) landed (thx alex rudenko!). Frames go **straight from the compositor** to an out-of-process encoder over shared memory, and Chrome **writes AV1 into the mp4** as it goes (plus optional tab audio). 💅 Stopping is ~instant because the encoding is already done (no multi-second `ffmpeg` flush at the end). And you can start/stop recording whenever you want: log in, warm up the page, then record just the interaction.
 
 **In short: It's hot. It's good. really good.**
 
