@@ -1,6 +1,6 @@
 {
   "name": "chrome-capture",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-dependency 60-120fps / 4K tab video + audio capture from Chromium (M153+) via CDP Page.startScreenRecording",
   "type": "module",
   "main": "./dist/index.js",
