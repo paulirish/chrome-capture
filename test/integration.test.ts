@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict';
 import {access, readFile, rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {platform, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {describe, it} from 'node:test';
 import {chromium} from 'playwright-core';
@@ -76,7 +76,10 @@ async function verifyMp4(
   }
 }
 
-const LAUNCH_ARGS = ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader'];
+const LAUNCH_ARGS = [
+  '--window-size=640,360',
+  ...(platform() === 'linux' ? ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader'] : []),
+];
 
 describe('End-to-End Integration Tests (Real Headless Chrome M153+)', {timeout: 60_000}, () => {
   it('records 60fps video with puppeteer-core and startRecording(page)', async () => {
