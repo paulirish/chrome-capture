@@ -89,6 +89,22 @@ export interface CdpCommands {
     params: [{url: string}],
     returnType: {frameId: string},
   ];
+  'Page.addScriptToEvaluateOnNewDocument': [
+    params: [{source: string; worldName?: string}],
+    returnType: {identifier: string},
+  ];
+  'Input.dispatchMouseEvent': [
+    params: [{
+      type: 'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel';
+      x: number;
+      y: number;
+      button?: 'none' | 'left' | 'middle' | 'right' | 'back' | 'forward';
+      clickCount?: number;
+      deltaX?: number;
+      deltaY?: number;
+    }],
+    returnType: void,
+  ];
   'Browser.getVersion': [
     params: [],
     returnType: {product: string},

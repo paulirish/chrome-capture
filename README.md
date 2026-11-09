@@ -89,6 +89,10 @@ const mp4 = await recorder.stop();
 session.close();
 ```
 
+### Visible cursor
+
+With Playwright, `await page.screencast.showActions()` draws its cursor and click badges right into the DOM (without starting `Page.startScreencast`), so `startRecording(page)` captures them natively. Over raw CDP, you can inject an SVG cursor overlay yourself — see [`examples/raw-cdp-cursor.ts`](./examples/raw-cdp-cursor.ts).
+
 ## Benchmarks
 
 Same 6.4s UI replay (typing, clicks, drag-and-drop, scroll) at 1280x800, comparing the `Page.startScreencast` + `ffmpeg` pipeline (`recordVideo`) against `Page.startScreenRecording` (`chrome-capture` at its default 60fps) on an M4 Max. Methodology and the full numbers are in [benchmarks/README.md](./benchmarks/README.md).
