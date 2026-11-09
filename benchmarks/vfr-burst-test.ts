@@ -286,7 +286,7 @@ Options:
   }
 
   await recordBurst(chromeBin, headless, '1080p_120fps_burst', 1920, 1080, 120, idleSec, burstSec, outDir);
-  await recordBurst(chromeBin, headless, '4k_60fps_burst', 3840, 2160, 60, idleSec, burstSec, outDir);
+  await recordBurst(chromeBin, headless, '2160p_60fps_burst', 3840, 2160, 60, idleSec, burstSec, outDir);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

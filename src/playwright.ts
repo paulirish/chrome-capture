@@ -5,7 +5,7 @@
  */
 
 /**
- * Playwright (`playwright` / `playwright-core` / `@playwright/test`) integration for 60-120fps / 4K
+ * Playwright (`playwright` / `playwright-core` / `@playwright/test`) integration for 60-120fps / 2160p
  * native CDP `Page.startScreenRecording`.
  *
  * Usage with Playwright Library:

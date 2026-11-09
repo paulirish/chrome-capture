@@ -6,7 +6,7 @@
  */
 
 /**
- * High-framerate (90-120fps) 1080p/4K showcase capture of two Gemini 4 Argon WebGL2 + Web Audio demos:
+ * High-framerate (90-120fps) 1080p/2160p showcase capture of two Gemini 4 Argon WebGL2 + Web Audio demos:
  *   1. Senna 800KG (https://sam1983aing.github.io/senna-800kg/)
  *   2. Ticket Tear (https://sam1983aing.github.io/ticket-tear/)
  *
@@ -274,7 +274,7 @@ const browser = await chromium.launch({
 });
 
 try {
-  // deviceScaleFactor: 1 keeps Retina macOS from rendering a 3840x2160 (4K) WebGL2 canvas for a 1080p capture.
+  // deviceScaleFactor: 1 keeps Retina macOS from rendering a 3840x2160 (2160p) WebGL2 canvas for a 1080p capture.
   const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1});
   const rows: string[] = [];
 

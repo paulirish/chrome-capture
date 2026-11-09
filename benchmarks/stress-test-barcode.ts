@@ -271,9 +271,9 @@ Options:
     { label: '1080p @ 120fps (Native ProMotion VSync)', width: 1920, height: 1080, fps: 120, uncap: false },
     { label: '1080p @ 120fps (Uncapped VSync)', width: 1920, height: 1080, fps: 120, uncap: true },
     { label: '1440p @ 60fps (Native VSync)', width: 2560, height: 1440, fps: 60, uncap: false },
-    { label: '4K (3840x2160) @ 30fps (Native VSync)', width: 3840, height: 2160, fps: 30, uncap: false },
-    { label: '4K (3840x2160) @ 60fps (Native VSync)', width: 3840, height: 2160, fps: 60, uncap: false },
-    { label: '4K (3840x2160) @ 60fps (Uncapped VSync)', width: 3840, height: 2160, fps: 60, uncap: true },
+    { label: '2160p (3840x2160) @ 30fps (Native VSync)', width: 3840, height: 2160, fps: 30, uncap: false },
+    { label: '2160p (3840x2160) @ 60fps (Native VSync)', width: 3840, height: 2160, fps: 60, uncap: false },
+    { label: '2160p (3840x2160) @ 60fps (Uncapped VSync)', width: 3840, height: 2160, fps: 60, uncap: true },
   ];
 
   const rows: Array<{label: string; fps: number; m: BarcodeMetrics}> = [];

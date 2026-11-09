@@ -1,6 +1,6 @@
 # chrome-capture
 
-Record a Chrome tab at 60-120fps (up to 4K) straight to a AV1 `.mp4`. Tab audio too. No ffmpeg.
+Record a Chrome tab at 60-120fps (up to 2160p) straight to a AV1 `.mp4`. Tab audio too. No ffmpeg.
 
 ```bash
 npx chrome-capture https://paulirish.github.io/chrome-capture/ demo.mp4 4s
@@ -101,9 +101,9 @@ Same 6.4s UI replay (typing, clicks, drag-and-drop, scroll) at 1280x800, compari
 | PSNR vs. lossless screenshot | 32 dB | 34 dB |
 | Audio | none | optional |
 
-Because Chrome encodes the video in-flight instead of piping JPEGs to `ffmpeg`, stopping takes 17ms instead of 3.8s (or 91ms vs 20.5s at 4K), and the whole test finishes ~10s quicker. 
+Because Chrome encodes the video in-flight instead of piping JPEGs to `ffmpeg`, stopping takes 17ms instead of 3.8s (or 91ms vs 20.5s at 2160p), and the whole test finishes ~10s quicker. 
 
-**What about bitrate and visual quality?** There's no bitrate/CRF knob (yet). Under the hood, Chrome encodes on the fly with `libaom` AV1 in realtime 1-pass VBR and scales target bitrate linearly with pixel rate (`2 Mbps` at 720p30 -> `9 Mbps` at 1080p60 -> `18 Mbps` at 1080p120 -> `72 Mbps` at 4K120). 
+**What about bitrate and visual quality?** There's no bitrate/CRF knob (yet). Under the hood, Chrome encodes on the fly with `libaom` AV1 in realtime 1-pass VBR and scales target bitrate linearly with pixel rate (`2 Mbps` at 720p30 -> `9 Mbps` at 1080p60 -> `18 Mbps` at 1080p120 -> `72 Mbps` at 2160p120). 
 
 The **high bitrate sweet spot** is 1080p60 (`9 Mbps`) and up (bumping resolution or `frameRate` doubles as a backdoor bitrate multiplier). If you ever need lossless 1px text fidelity and only care about ~10-15fps, an offline `Page.startScreencast({format: 'png'})` -> `ffmpeg` pipeline still has a place.
 
@@ -114,9 +114,9 @@ Video files can lie about fps. So the stress test ([demo](https://paulirish.gith
 <!-- barcode-1920x1080-120fps.mp4 -->
 https://github.com/user-attachments/assets/67734ccb-b986-4d66-a7d4-84bf05f7af87
 
-* **Mac (`--headless=new`)**: **4K @ 60fps** (60 unique fps). Headless Chrome still gets full Metal GPU acceleration, so 1080p, 1440p, and 4K all lock at 60fps, but headless drives `rAF` from a synthetic 60Hz timer instead of the display's `CVDisplayLink`.
-* **Mac (`--headful` on 120Hz ProMotion)**: **1080p @ 120fps** and **4K @ 120fps** 😲 (`119.9 fps`, 59.8 Mbps AV1 + stereo Opus on Three.js/WebGL2 scenes in [`examples/capture-demos.ts`](./examples/capture-demos.ts)).
+* **Mac (`--headless=new`)**: **2160p @ 60fps** (60 unique fps). Headless Chrome still gets full Metal GPU acceleration, so 1080p, 1440p, and 2160p all lock at 60fps, but headless drives `rAF` from a synthetic 60Hz timer instead of the display's `CVDisplayLink`.
+* **Mac (`--headful` on 120Hz ProMotion)**: **1080p @ 120fps** and **2160p @ 120fps** 😲 (`119.9 fps`, 59.8 Mbps AV1 + stereo Opus on Three.js/WebGL2 scenes in [`examples/capture-demos.ts`](./examples/capture-demos.ts)).
 * **Headless Linux (no GPU / CI)**: **1080p @ 60fps** (60.4 unique fps) or **1440p @ 60fps** (~58 unique fps) on standard 60Hz vsync, and up to **1080p @ 75-83fps** if you uncap vsync (`--disable-frame-rate-limit --disable-gpu-vsync`).
 * **Other setups (Windows / Linux w/ discrete GPU)**: ?
 
-One macOS gotcha: don't pass `--disable-frame-rate-limit --disable-gpu-vsync` on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the Metal command queue, and starves the capture readback (dropping 4K@60 to 0.3fps). Leave native vsync alone; it's what gets you to 120.
+One macOS gotcha: don't pass `--disable-frame-rate-limit --disable-gpu-vsync` on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the Metal command queue, and starves the capture readback (dropping 2160p@60 to 0.3fps). Leave native vsync alone; it's what gets you to 120.

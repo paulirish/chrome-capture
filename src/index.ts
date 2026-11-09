@@ -64,7 +64,7 @@ export class CdpScreenRecorder {
    * NOTE on >60fps and VSync:
    * - On macOS with a ProMotion display (90Hz/120Hz) in headed mode, `CVDisplayLink` drives
    *   `ExternalBeginFrameSourceMac` at up to 120Hz natively — sustaining 89.4 unique fps at
-   *   1080p@90, 120.2 unique fps at 1080p@120, and 60.2 unique fps at 4K (3840x2160)@60.
+   *   1080p@90, 120.2 unique fps at 1080p@120, and 60.2 unique fps at 2160p (3840x2160)@60.
    * - Do NOT pass `--disable-frame-rate-limit --disable-gpu-vsync` on hardware-accelerated
    *   macOS: switching to `BackToBackBeginFrameSource` spins in-page `rAF` at 1,600-9,800 fps,
    *   flooding the Viz GPU compositor command queue and starving `FrameSinkVideoCapturerImpl`

@@ -267,7 +267,7 @@ Options:
     {label: 'mr_1080p_60_vp9_8m', width: 1920, height: 1080, fps: 60, mimeType: 'video/webm; codecs=vp9', videoBitsPerSecond: 8_000_000, durationMs},
     {label: 'mr_1080p_120_vp9_12m', width: 1920, height: 1080, fps: 120, mimeType: 'video/webm; codecs=vp9', videoBitsPerSecond: 12_000_000, durationMs},
     {label: 'mr_1080p_120_av1_mp4_12m', width: 1920, height: 1080, fps: 120, mimeType: 'video/mp4; codecs=av01.0.04M.08', videoBitsPerSecond: 12_000_000, durationMs},
-    {label: 'mr_4k_60_vp9_15m', width: 3840, height: 2160, fps: 60, mimeType: 'video/webm; codecs=vp9', videoBitsPerSecond: 15_000_000, durationMs},
+    {label: 'mr_2160p_60_vp9_15m', width: 3840, height: 2160, fps: 60, mimeType: 'video/webm; codecs=vp9', videoBitsPerSecond: 15_000_000, durationMs},
   ];
 
   for (const c of cases) {
