@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/e17ffe7e-e868-40d5-adc9-df85eeb3dae8
 
 _(Thx [github.com/Sam1983Aing/senna-800kg](https://github.com/Sam1983Aing/senna-800kg) for this Gemini Argon generation.)_
 
-Puppeteer v25.10+ wraps this in an experimental `page.record()` (deprecating `page.screencast()`). Playwright is still on `Page.startScreencast` (plus [recent](https://github.com/microsoft/playwright/pull/42929) [upgrades](https://github.com/microsoft/playwright/pull/42752)), but I suspect they'll get on this pretty soon…
+Puppeteer v25.10+ wraps this in an experimental `page.record()` (deprecating `page.screencast()`). Playwright is still on `Page.startScreencast` (plus [recent](https://github.com/microsoft/playwright/pull/42929) [upgrades](https://github.com/microsoft/playwright/pull/42752)), but I suspect they'll [get on this](https://github.com/microsoft/playwright/issues/43999) pretty soon…
 
 ## CLI
 
