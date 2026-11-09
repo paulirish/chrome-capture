@@ -350,31 +350,51 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
     options.url ?? 'about:blank',
   ].filter(Boolean);
 
-  const proc = spawn(chromePath, chromeArgs, {stdio: ['ignore', 'ignore', 'pipe']});
+  const isPosix = platform() !== 'win32';
+  const proc = spawn(chromePath, chromeArgs, {
+    stdio: ['ignore', 'ignore', 'pipe'],
+    detached: isPosix,
+  });
 
-  let cleanedUp = false;
-  const sigintHandler = () => void cleanup().finally(() => process.exit(130));
-  const sigtermHandler = () => void cleanup().finally(() => process.exit(143));
-  const cleanup = async () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    process.removeListener('SIGINT', sigintHandler);
-    process.removeListener('SIGTERM', sigtermHandler);
-    proc.stderr?.destroy();
-    if (proc.exitCode === null && proc.signalCode === null) {
-      const exitPromise = new Promise<void>(resolve => proc.once('exit', () => resolve()));
-      try { proc.kill('SIGTERM'); } catch {}
-      const killTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 500);
-      killTimer.unref();
-      await exitPromise;
-      clearTimeout(killTimer);
+  const killChromeTree = (signal: 'SIGTERM' | 'SIGKILL') => {
+    if (proc.exitCode !== null || proc.signalCode !== null) return;
+    if (isPosix && proc.pid) {
+      try {
+        process.kill(-proc.pid, signal);
+        return;
+      } catch {}
     }
-    proc.unref();
-    await rm(userDataDir, {recursive: true, force: true}).catch(() => {});
+    try { proc.kill(signal); } catch {}
+  };
+
+  let cleanupPromise: Promise<void> | undefined;
+  const sigintHandler = () => void cleanup().catch(() => {}).finally(() => process.exit(130));
+  const sigtermHandler = () => void cleanup().catch(() => {}).finally(() => process.exit(143));
+  const processExitHandler = () => killChromeTree('SIGKILL');
+  const cleanup = () => {
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = (async () => {
+      process.removeListener('SIGINT', sigintHandler);
+      process.removeListener('SIGTERM', sigtermHandler);
+      process.removeListener('exit', processExitHandler);
+      proc.stderr?.destroy();
+      if (proc.exitCode === null && proc.signalCode === null) {
+        const exitPromise = new Promise<void>(resolve => proc.once('exit', () => resolve()));
+        killChromeTree('SIGTERM');
+        const killTimer = setTimeout(() => killChromeTree('SIGKILL'), 500);
+        killTimer.unref();
+        await exitPromise;
+        clearTimeout(killTimer);
+      }
+      proc.unref();
+      await rm(userDataDir, {recursive: true, force: true, maxRetries: 10, retryDelay: 100});
+    })();
+    return cleanupPromise;
   };
 
   process.once('SIGINT', sigintHandler);
   process.once('SIGTERM', sigtermHandler);
+  process.once('exit', processExitHandler);
 
   try {
     const browserWsUrl = await new Promise<string>((resolve, reject) => {
@@ -426,7 +446,7 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<L
       close: cleanup,
     };
   } catch (err) {
-    await cleanup();
+    await cleanup().catch(() => {});
     throw err;
   }
 }
