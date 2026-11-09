@@ -14,14 +14,13 @@
  */
 
 import {platform} from 'node:os';
-import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
-import type {Protocol} from 'devtools-protocol';
 import {
   connectCdpSession,
   launchChrome,
   parseDuration,
   startRecording,
+  type ScreenRecordingOptions,
 } from './index.ts';
 
 export async function cli(): Promise<void> {
@@ -87,7 +86,7 @@ Options:
   const frameRate = parseInt(parsed.values.fps ?? parsed.values.frameRate ?? '60', 10);
   const warmupMs = parseInt(parsed.values.warmup ?? '1000', 10);
   const rawArea = parsed.values['capture-area'];
-  const captureArea: Protocol.Page.StartScreenRecordingRequest['captureArea'] =
+  const captureArea: ScreenRecordingOptions['captureArea'] =
     rawArea === 'browserWindow' ? 'browserWindow' : 'target';
   const audio = parsed.values.audio ? true : !parsed.values['no-audio'];
   const headful = Boolean(parsed.values.headful || parsed.values.headed);
@@ -158,9 +157,7 @@ Options:
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  cli().catch((err: Error) => {
-    console.error(err);
-    process.exit(1);
-  });
-}
+cli().catch((err: Error) => {
+  console.error(err);
+  process.exit(1);
+});

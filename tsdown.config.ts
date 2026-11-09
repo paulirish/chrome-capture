@@ -10,9 +10,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   fixedExtension: false,
-  deps: {
-    neverBundle: ['puppeteer-core', 'playwright-core'],
-    onlyBundle: ['devtools-protocol'],
-  },
 });
 

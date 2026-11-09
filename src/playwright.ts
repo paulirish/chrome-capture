@@ -23,7 +23,6 @@
  *   });
  */
 
-import type {Page} from 'playwright-core';
 import {
   startRecording,
   type ActiveRecording,
@@ -64,7 +63,7 @@ export function screenRecordingFixture(
   defaultOptions: ScreenRecordingFixtureOptions = {},
 ): [
   (
-    fixtures: {page: Page | PlaywrightPageLike},
+    fixtures: {page: PlaywrightPageLike},
     use: (controller: ScreenRecordingController) => Promise<void>,
     testInfo: PlaywrightFixtureTestInfoLike,
   ) => Promise<void>,
@@ -73,7 +72,7 @@ export function screenRecordingFixture(
   const isAuto = defaultOptions.auto ?? false;
 
   const fixtureFn = async (
-    {page}: {page: Page | PlaywrightPageLike},
+    {page}: {page: PlaywrightPageLike},
     use: (controller: ScreenRecordingController) => Promise<void>,
     testInfo: PlaywrightFixtureTestInfoLike,
   ): Promise<void> => {

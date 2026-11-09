@@ -16,20 +16,102 @@ import {spawn, type ChildProcess} from 'node:child_process';
 import {access, mkdir, mkdtemp, readdir, rm, writeFile} from 'node:fs/promises';
 import {homedir, platform, tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
-import type {Protocol} from 'devtools-protocol';
-import type {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js';
-import type {Page as PlaywrightPage} from 'playwright-core';
-import type {Page as PuppeteerPage} from 'puppeteer-core';
 
-export interface ScreenRecordingOptions extends Protocol.Page.StartScreenRecordingRequest {
+export interface ScreenRecordingOptions {
+  /**
+   * Whether to record audio from the tab (48kHz stereo Opus).
+   */
+  audio?: boolean;
+  /**
+   * Maximum frame width in pixels.
+   */
+  maxWidth?: number;
+  /**
+   * Maximum frame height in pixels.
+   */
+  maxHeight?: number;
+  /**
+   * Maximum frame rate in frames per second (default: 60).
+   */
+  frameRate?: number;
+  /**
+   * The area to record. Defaults to `'target'`.
+   */
+  captureArea?: 'target' | 'browserWindow';
+  /**
+   * Optional file path where `.stop()` or `await using` will save the recorded MP4.
+   */
   outputPath?: string;
 }
 
+export interface CdpCommands {
+  'Page.startScreenRecording': [
+    params: [Omit<ScreenRecordingOptions, 'outputPath'>?],
+    returnType: {stream: string},
+  ];
+  'Page.stopScreenRecording': [
+    params: [],
+    returnType: {stream: string},
+  ];
+  'IO.read': [
+    params: [{handle: string; offset?: number; size?: number}],
+    returnType: {base64Encoded?: boolean; data: string; eof: boolean},
+  ];
+  'IO.close': [
+    params: [{handle: string}],
+    returnType: void,
+  ];
+  'Target.getTargets': [
+    params: [{filter?: Array<{type?: string; exclude?: boolean}>}?],
+    returnType: {targetInfos: Array<{targetId: string; type: string; url: string}>},
+  ];
+  'Target.createTarget': [
+    params: [{url: string}],
+    returnType: {targetId: string},
+  ];
+  'Emulation.setDeviceMetricsOverride': [
+    params: [{width: number; height: number; deviceScaleFactor: number; mobile: boolean}],
+    returnType: void,
+  ];
+  'Page.enable': [
+    params: [],
+    returnType: void,
+  ];
+  'Page.getFrameTree': [
+    params: [],
+    returnType: {frameTree: {frame: {id: string}}},
+  ];
+  'Page.setDocumentContent': [
+    params: [{frameId: string; html: string}],
+    returnType: void,
+  ];
+  'Page.navigate': [
+    params: [{url: string}],
+    returnType: {frameId: string},
+  ];
+  'Browser.getVersion': [
+    params: [],
+    returnType: {product: string},
+  ];
+  'Runtime.enable': [
+    params: [],
+    returnType: void,
+  ];
+  'Runtime.evaluate': [
+    params: [{expression: string; returnByValue?: boolean; awaitPromise?: boolean}],
+    returnType: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      result: {type: string; value?: any};
+      exceptionDetails?: object;
+    },
+  ];
+}
+
 export interface CdpSessionLike {
-  send<K extends keyof ProtocolMapping.Commands>(
+  send<K extends keyof CdpCommands>(
     method: K,
-    ...params: ProtocolMapping.Commands[K]['paramsType']
-  ): Promise<ProtocolMapping.Commands[K]['returnType']>;
+    ...params: CdpCommands[K][0]
+  ): Promise<CdpCommands[K][1]>;
 }
 
 export interface LaunchChromeOptions {
@@ -70,9 +152,9 @@ export class CdpScreenRecorder {
    *   flooding the Viz GPU compositor command queue and starving `FrameSinkVideoCapturerImpl`
    *   readback down to 0.3-11.7 fps.
    */
-  async start(options: ScreenRecordingOptions = {}): Promise<Protocol.IO.StreamHandle> {
+  async start(options: ScreenRecordingOptions = {}): Promise<string> {
     const {outputPath: _outputPath, ...cdpOptions} = options;
-    const request: Protocol.Page.StartScreenRecordingRequest = {
+    const request = {
       frameRate: 60,
       ...cdpOptions,
     };
@@ -106,7 +188,7 @@ export class CdpScreenRecorder {
 }
 
 /**
- * Minimal WebSocket-backed CDP session typed against `devtools-protocol`'s `ProtocolMapping.Commands`.
+ * Minimal WebSocket-backed CDP session.
  */
 export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000): Promise<CdpSessionLike & {close: () => void}> {
   const ws = new WebSocket(wsUrl);
@@ -123,7 +205,7 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
     ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error(`WebSocket connection failed: ${wsUrl}`)); }, {once: true});
   });
 
-  type CommandReturn = ProtocolMapping.Commands[keyof ProtocolMapping.Commands]['returnType'];
+  type CommandReturn = CdpCommands[keyof CdpCommands][1];
   let nextId = 1;
   let isClosed = false;
   const pending = new Map<number, {resolve: (val: CommandReturn) => void; reject: (err: Error) => void}>();
@@ -148,13 +230,13 @@ export async function connectCdpSession(wsUrl: string, connectTimeoutMs = 10_000
   });
 
   return {
-    send<K extends keyof ProtocolMapping.Commands>(
+    send<K extends keyof CdpCommands>(
       method: K,
-      ...args: ProtocolMapping.Commands[K]['paramsType']
-    ): Promise<ProtocolMapping.Commands[K]['returnType']> {
+      ...args: CdpCommands[K][0]
+    ): Promise<CdpCommands[K][1]> {
       if (isClosed) return Promise.reject(new Error(`Cannot send CDP command ${String(method)}: WebSocket is closed`));
       const id = nextId++;
-      const {promise, resolve, reject} = Promise.withResolvers<ProtocolMapping.Commands[K]['returnType']>();
+      const {promise, resolve, reject} = Promise.withResolvers<CdpCommands[K][1]>();
       pending.set(id, {resolve: resolve as (val: CommandReturn) => void, reject});
       try {
         ws.send(JSON.stringify({id, method, params: args[0] ?? {}}));
@@ -350,12 +432,20 @@ export function parseDuration(val: string | number | undefined, defaultMs = 3000
 
 export interface PlaywrightPageLike {
   context(): {
-    newCDPSession(page: PlaywrightPageLike | PlaywrightPage): Promise<CdpSessionLike & {detach(): Promise<void>}>;
+    newCDPSession(page: never): Promise<{
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      send(...args: never[]): Promise<any>;
+      detach(): Promise<void>;
+    }>;
   };
 }
 
 export interface PuppeteerPageLike {
-  createCDPSession(): Promise<CdpSessionLike & {detach(): Promise<void>}>;
+  createCDPSession(): Promise<{
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    send(...args: never[]): Promise<any>;
+    detach(): Promise<void>;
+  }>;
 }
 
 export interface ActiveRecording {
@@ -365,9 +455,7 @@ export interface ActiveRecording {
 }
 
 export type RecordingTarget =
-  | PlaywrightPage
   | PlaywrightPageLike
-  | PuppeteerPage
   | PuppeteerPageLike
   | CdpSessionLike;
 
@@ -395,12 +483,14 @@ export async function startRecording(
   let detachSession: (() => Promise<void>) | undefined;
 
   if (isPlaywrightPage(target)) {
-    const cdpSession = await target.context().newCDPSession(target);
+    const cdpSession = await (
+      target.context() as {newCDPSession(page: PlaywrightPageLike): Promise<CdpSessionLike & {detach(): Promise<void>}>}
+    ).newCDPSession(target);
     session = cdpSession;
     detachSession = () => cdpSession.detach().catch(() => {});
   } else if (isPuppeteerPage(target)) {
     const cdpSession = await target.createCDPSession();
-    session = cdpSession;
+    session = cdpSession as CdpSessionLike;
     detachSession = () => cdpSession.detach().catch(() => {});
   } else if (isCdpSession(target)) {
     session = target;

@@ -122,3 +122,7 @@ https://github.com/user-attachments/assets/67734ccb-b986-4d66-a7d4-84bf05f7af87
 * **Other setups (Windows / Linux w/ discrete GPU)**: ?
 
 One macOS gotcha: don't pass `--disable-frame-rate-limit --disable-gpu-vsync` on a GPU-accelerated Mac. `rAF` spins at 1,600-9,800fps, floods the Metal command queue, and starves the capture readback (dropping 2160p@60 to 0.3fps). Leave native vsync alone; it's what gets you to 120.
+
+---
+
+[![npm version](https://img.shields.io/npm/v/chrome-capture.svg)](https://www.npmjs.com/package/chrome-capture)

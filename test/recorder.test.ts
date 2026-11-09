@@ -5,10 +5,12 @@
  */
 
 import assert from 'node:assert/strict';
-import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {spawnSync} from 'node:child_process';
+import {mkdtemp, readFile, rm, symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
 import {describe, it} from 'node:test';
+import type {Protocol} from 'devtools-protocol';
 import type {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js';
 import {
   CdpScreenRecorder,
@@ -16,6 +18,7 @@ import {
   parseDuration,
   type PlaywrightPageLike,
   type PuppeteerPageLike,
+  type ScreenRecordingOptions,
   startRecording,
 } from '../src/index.ts';
 import {screenRecordingFixture} from '../src/playwright.ts';
@@ -241,5 +244,30 @@ describe('screenRecordingFixture', () => {
         contentType: 'video/mp4',
       },
     ]);
+  });
+});
+
+describe('CLI bin & CDP protocol type parity', () => {
+  it('executes cli.ts when invoked via a symlink (as npx / node_modules/.bin does)', async () => {
+    const opts: Omit<ScreenRecordingOptions, 'outputPath'> = {
+      frameRate: 60,
+      maxWidth: 1920,
+      maxHeight: 1080,
+      audio: true,
+      captureArea: 'target',
+    };
+    const _typeCheck: Protocol.Page.StartScreenRecordingRequest = opts;
+    assert.equal(_typeCheck.frameRate, 60);
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'cli-bin-'));
+    const linkPath = join(tempDir, 'chrome-capture');
+    try {
+      await symlink(resolve('src/cli.ts'), linkPath);
+      const proc = spawnSync(process.execPath, [linkPath, '--help'], {encoding: 'utf8'});
+      assert.equal(proc.status, 0);
+      assert.match(proc.stdout, /Usage: chrome-capture/);
+    } finally {
+      await rm(tempDir, {recursive: true, force: true});
+    }
   });
 });
