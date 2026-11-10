@@ -10,7 +10,7 @@
  * separates hover moves from clicks, squishes on mousedown, and spawns an expanding click ring.
  *
  * Usage:
- *   node examples/raw-cdp-cursor.ts [output.mp4]
+ *   node examples/raw-cdp-cursor/index.ts [output.mp4]
  */
 
 import {
@@ -18,7 +18,7 @@ import {
   launchChrome,
   startRecording,
   type CdpSessionLike,
-} from '../src/index.ts';
+} from '../../src/index.ts';
 
 /** Customize the SVG pointer and click ripple appearance here. */
 const CURSOR_THEME = {
@@ -157,43 +157,7 @@ const CURSOR_INIT_SCRIPT = `((theme) => {
   };
 })(${JSON.stringify(CURSOR_THEME)});`;
 
-const DEMO_HTML = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  body { margin: 0; height: 100vh; display: grid; place-items: center; background: #0f172a; font: 600 18px/1.4 system-ui, sans-serif; color: #f8fafc; }
-  .card { display: grid; gap: 22px; padding: 40px 44px; border-radius: 18px; background: #1e293b; box-shadow: 0 20px 50px rgba(0,0,0,0.4); text-align: center; min-width: 520px; }
-  .label { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }
-  .row { display: flex; gap: 24px; justify-content: center; }
-  button { padding: 14px 26px; border: 0; border-radius: 10px; background: #3b82f6; color: #fff; font: inherit; cursor: pointer; transition: transform 100ms, background 120ms, box-shadow 120ms; }
-  button:hover { background: #2563eb; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35); }
-  button:active { transform: scale(0.95); }
-  button.active { background: #10b981; }
-  #status { color: #cbd5e1; font-weight: 500; }
-</style>
-</head>
-<body>
-  <div class="card">
-    <div class="label">Raw CDP · Scripted Bezier + Click Ring</div>
-    <div id="status">Waiting for input...</div>
-    <div class="row">
-      <button id="alpha">Alpha</button>
-      <button id="beta">Beta</button>
-      <button id="gamma">Gamma</button>
-    </div>
-  </div>
-  <script>
-    for (const btn of document.querySelectorAll('button')) {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById('status').textContent = 'Clicked ' + btn.textContent;
-      });
-    }
-  </script>
-</body>
-</html>`;
+const DEMO_URL = new URL('./index.html', import.meta.url).href;
 
 /** Wait until a selector resolves in the current document, then return its viewport center. */
 async function waitForCenter(session: CdpSessionLike, selector: string): Promise<{x: number; y: number}> {
@@ -247,7 +211,7 @@ try {
     // Register before navigating so the cursor helper is installed on every new document
     // before page scripts run and persists across navigations and reloads.
     await session.send('Page.addScriptToEvaluateOnNewDocument', {source: CURSOR_INIT_SCRIPT});
-    await session.send('Page.navigate', {url: `data:text/html,${encodeURIComponent(DEMO_HTML)}`});
+    await session.send('Page.navigate', {url: DEMO_URL});
     await waitForCenter(session, '#alpha');
 
     console.log('[*] Recording raw CDP cursor choreography...');

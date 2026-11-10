@@ -11,11 +11,11 @@
  * scripts using `page.addInitScript(...)` and smooth `page.mouse.move()` sweeps.
  *
  * Usage:
- *   node examples/custom-cursor.ts [output.mp4]
+ *   node examples/custom-cursor/index.ts [output.mp4]
  */
 
 import {chromium, type Page} from 'playwright-core';
-import {findChromeBinary, startRecording} from '../src/playwright.ts';
+import {findChromeBinary, startRecording} from '../../src/playwright.ts';
 
 interface CursorTheme {
   width: number;
@@ -145,52 +145,7 @@ function installCustomCursor(theme: CursorTheme): void {
   }, {capture: true, passive: true});
 }
 
-const DEMO_HTML = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  body { margin: 0; height: 100vh; display: grid; place-items: center; background: #0f172a; font: 600 17px/1.4 system-ui, sans-serif; color: #f8fafc; }
-  .card { display: grid; gap: 22px; padding: 40px 44px; border-radius: 18px; background: #1e293b; box-shadow: 0 20px 50px rgba(0,0,0,0.45); width: 520px; }
-  .label { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }
-  .row { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
-  button { padding: 14px 22px; border: 0; border-radius: 10px; background: #334155; color: #f8fafc; font: inherit; transition: transform 90ms, background 120ms, box-shadow 120ms; }
-  button:hover { background: #475569; box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.35); }
-  button:active { transform: scale(0.95); }
-  button.primary { background: #0891b2; }
-  button.primary:hover { background: #06b6d4; }
-  button.on, button.on:hover { background: #10b981; }
-  #status { color: #94a3b8; font-weight: 500; min-height: 24px; }
-</style>
-</head>
-<body>
-  <div class="card">
-    <div class="label">Live Pointer Overlay · Hover, Press &amp; Rapid Clicks</div>
-    <div id="status">Hover or click any control...</div>
-    <div class="row">
-      <button id="preview">Hover Only</button>
-      <button id="toggle" class="primary">Live Cursor: OFF</button>
-      <button id="boost" class="primary">Clicks: 0</button>
-    </div>
-  </div>
-  <script>
-    let enabled = false;
-    let count = 0;
-    const status = document.getElementById('status');
-    document.getElementById('toggle').addEventListener('click', (e) => {
-      enabled = !enabled;
-      e.currentTarget.textContent = 'Live Cursor: ' + (enabled ? 'ON' : 'OFF');
-      e.currentTarget.classList.toggle('on', enabled);
-      status.textContent = enabled ? 'Custom overlay enabled' : 'Custom overlay paused';
-    });
-    document.getElementById('boost').addEventListener('click', (e) => {
-      count += 1;
-      e.currentTarget.textContent = 'Clicks: ' + count;
-      status.textContent = 'Fired click #' + count;
-    });
-  </script>
-</body>
-</html>`;
+const DEMO_URL = new URL('./index.html', import.meta.url).href;
 
 interface PointerPos {
   x: number;
@@ -236,7 +191,7 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage({viewport: {width: 1280, height: 720}});
   await page.addInitScript(installCustomCursor, CURSOR_THEME);
-  await page.goto(`data:text/html,${encodeURIComponent(DEMO_HTML)}`, {waitUntil: 'domcontentloaded'});
+  await page.goto(DEMO_URL, {waitUntil: 'domcontentloaded'});
 
   const pos: PointerPos = {x: 240, y: 240};
   await page.mouse.move(pos.x, pos.y);

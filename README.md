@@ -91,7 +91,7 @@ session.close();
 
 ### Visible cursor
 
-With Playwright, `await page.screencast.showActions()` draws its cursor, element highlights, and click badges right into the DOM (without starting `Page.startScreencast`), so `startRecording(page)` captures them natively. To restyle the cursor SVG and click ring yourself, inject a custom DOM overlay instead — see [`examples/custom-cursor.ts`](./examples/custom-cursor.ts) (`pointermove`/`pointerdown` tracking for Playwright or manual sessions) and [`examples/raw-cdp-cursor.ts`](./examples/raw-cdp-cursor.ts) (raw CDP Bezier choreography).
+With Playwright, `await page.screencast.showActions()` draws its cursor, element highlights, and click badges right into the DOM (without starting `Page.startScreencast`), so `startRecording(page)` captures them natively. To restyle the cursor SVG and click ring yourself, inject a custom DOM overlay instead — see [`examples/custom-cursor/`](./examples/custom-cursor/) (`pointermove`/`pointerdown` tracking for Playwright or manual sessions) and [`examples/raw-cdp-cursor/`](./examples/raw-cdp-cursor/) (raw CDP Bezier choreography).
 
 ## Benchmarks
 
