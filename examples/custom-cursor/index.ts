@@ -10,6 +10,10 @@
  * identically for manual human browsing (via `Page.addScriptToEvaluateOnNewDocument`) or Playwright
  * scripts using `page.addInitScript(...)` and smooth `page.mouse.move()` sweeps.
  *
+ * The Shadow DOM "glass pane" overlay and `12×18` pointer SVG geometry are adapted from Playwright's
+ * `highlight.ts` (thanks, Playwright team!):
+ *   https://github.com/microsoft/playwright/blob/df1ca47b1eb95a907c559f54675e680a2b7ea901/packages/injected/src/highlight.ts
+ *
  * Usage:
  *   node examples/custom-cursor/index.ts [output.mp4]
  */

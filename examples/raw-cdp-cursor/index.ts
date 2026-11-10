@@ -6,8 +6,20 @@
 
 /**
  * Restyled animated DOM cursor + click ring over raw CDP (no Playwright/Puppeteer needed).
- * Adapts Playwright's 30-step bowed Bezier curve (`cursorPathKeyframes`) for scripted jumps,
- * separates hover moves from clicks, squishes on mousedown, and spawns an expanding click ring.
+ *
+ * Much of the cursor overlay architecture and motion design here is directly lifted from or heavily
+ * inspired by Playwright's `highlight.ts` — huge thanks to the Playwright team!
+ *   https://github.com/microsoft/playwright/blob/df1ca47b1eb95a907c559f54675e680a2b7ea901/packages/injected/src/highlight.ts
+ *
+ * Adapted / lifted from Playwright's `highlight.ts`:
+ *   - Full-viewport `pointer-events: none` Shadow DOM overlay ("glass pane")
+ *   - `12×18` arrow SVG geometry with `(0, 0)` tip hotspot and `paint-order: stroke` (`_createCursorSvg`)
+ *   - `cursorPathKeyframes`: 30-step bowed cubic Bezier interpolation (lifted directly)
+ *   - Snap-destination + animate-from-delta WAAPI trick with `cubic-bezier(0.5, 0, 0.3, 1)` (`moveActionCursor`)
+ *
+ * Added in this example:
+ *   - Parameterized `CURSOR_THEME`, `scale(0.82)` press squish, and expanding click ring
+ *   - Raw CDP wiring (`Page.addScriptToEvaluateOnNewDocument` + `Input.dispatchMouseEvent`)
  *
  * Usage:
  *   node examples/raw-cdp-cursor/index.ts [output.mp4]
@@ -65,6 +77,8 @@ function installCdpCursor(theme: CursorTheme): void {
     root = host.attachShadow({mode: 'open'});
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    // Pointer geometry (`0 0 12 18` tip at origin + `paint-order: stroke`) adapted from `_createCursorSvg` in:
+    // https://github.com/microsoft/playwright/blob/df1ca47b1eb95a907c559f54675e680a2b7ea901/packages/injected/src/highlight.ts
     svg.setAttribute('viewBox', '0 0 12 18');
     svg.style.cssText = [
       'position:fixed',
@@ -92,6 +106,8 @@ function installCdpCursor(theme: CursorTheme): void {
     document.documentElement.appendChild(host);
   }
 
+  // Lifted from `cursorPathKeyframes` in Playwright's `highlight.ts` (thank you, Playwright team!):
+  // https://github.com/microsoft/playwright/blob/df1ca47b1eb95a907c559f54675e680a2b7ea901/packages/injected/src/highlight.ts
   function cursorPathKeyframes(dx: number, dy: number, seed: number): Keyframe[] {
     const random = (salt: number) => {
       const v = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453;
@@ -144,6 +160,8 @@ function installCdpCursor(theme: CursorTheme): void {
     ], {duration: 480, easing: 'cubic-bezier(0.16, 1, 0.3, 1)'}).onfinish = () => ring.remove();
   }
 
+  // Adapted from `moveActionCursor` in Playwright's `highlight.ts`: snaps `left`/`top` to the
+  // target immediately, then animates WAAPI `transform` from the old `(dx, dy)` back to `(0, 0)`.
   window.__cdpMoveCursor = async (x, y, fadeMs = 1500) => {
     ensureOverlay();
     if (!cursorEl) return;
