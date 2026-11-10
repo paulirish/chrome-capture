@@ -20,8 +20,25 @@ import {
   type CdpSessionLike,
 } from '../../src/index.ts';
 
+interface CursorTheme {
+  width: number;
+  height: number;
+  fill: string;
+  stroke: string;
+  ringColor: string;
+  ringFill: string;
+  ringSize: number;
+}
+
+declare global {
+  interface Window {
+    __cdpMoveCursor?: (x: number, y: number, fadeMs?: number) => Promise<void>;
+    __cdpPressCursor?: (down: boolean, x: number, y: number) => void;
+  }
+}
+
 /** Customize the SVG pointer and click ripple appearance here. */
-const CURSOR_THEME = {
+const CURSOR_THEME: CursorTheme = {
   width: 22,
   height: 33,
   fill: '#f43f5e',
@@ -31,10 +48,17 @@ const CURSOR_THEME = {
   ringSize: 64,
 };
 
-const CURSOR_INIT_SCRIPT = `((theme) => {
-  let host, root, cursorEl, fadeTimer;
+/**
+ * Self-contained browser init script serialized via `.toString()` for CDP
+ * `Page.addScriptToEvaluateOnNewDocument` (so helpers and state stay nested inside).
+ */
+function installCdpCursor(theme: CursorTheme): void {
+  let host: HTMLElement | undefined;
+  let root: ShadowRoot | undefined;
+  let cursorEl: SVGSVGElement | undefined;
+  let fadeTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function ensureOverlay() {
+  function ensureOverlay(): void {
     if (host?.isConnected || !document.documentElement) return;
     host = document.createElement('x-cdp-cursor');
     host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
@@ -46,8 +70,8 @@ const CURSOR_INIT_SCRIPT = `((theme) => {
       'position:fixed',
       'left:0',
       'top:0',
-      'width:' + theme.width + 'px',
-      'height:' + theme.height + 'px',
+      `width:${theme.width}px`,
+      `height:${theme.height}px`,
       'overflow:visible',
       'visibility:hidden',
       'pointer-events:none',
@@ -68,8 +92,8 @@ const CURSOR_INIT_SCRIPT = `((theme) => {
     document.documentElement.appendChild(host);
   }
 
-  function cursorPathKeyframes(dx, dy, seed) {
-    const random = (salt) => {
+  function cursorPathKeyframes(dx: number, dy: number, seed: number): Keyframe[] {
+    const random = (salt: number) => {
       const v = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453;
       return v - Math.floor(v);
     };
@@ -84,32 +108,32 @@ const CURSOR_INIT_SCRIPT = `((theme) => {
     const c2x = dx / 3 + normalX * endBow;
     const c2y = dy / 3 + normalY * endBow;
     const steps = 30;
-    const keyframes = [];
+    const keyframes: Keyframe[] = [];
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       const u = 1 - t;
       const px = u * u * u * dx + 3 * u * u * t * c1x + 3 * u * t * t * c2x;
       const py = u * u * u * dy + 3 * u * u * t * c1y + 3 * u * t * t * c2y;
-      keyframes.push({transform: \`translate(\${px.toFixed(1)}px, \${py.toFixed(1)}px)\`});
+      keyframes.push({transform: `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px)`});
     }
     return keyframes;
   }
 
-  function spawnRing(x, y) {
+  function spawnRing(x: number, y: number): void {
     if (!root) return;
     const ring = document.createElement('div');
     const half = theme.ringSize / 2;
     ring.style.cssText = [
       'position:fixed',
-      'left:' + x + 'px',
-      'top:' + y + 'px',
-      'width:' + theme.ringSize + 'px',
-      'height:' + theme.ringSize + 'px',
-      'margin:' + -half + 'px 0 0 ' + -half + 'px',
+      `left:${x}px`,
+      `top:${y}px`,
+      `width:${theme.ringSize}px`,
+      `height:${theme.ringSize}px`,
+      `margin:${-half}px 0 0 ${-half}px`,
       'border-radius:50%',
       'border:3px solid #ffffff',
-      'box-shadow:0 0 0 3px ' + theme.ringColor,
-      'background:' + theme.ringFill,
+      `box-shadow:0 0 0 3px ${theme.ringColor}`,
+      `background:${theme.ringFill}`,
       'pointer-events:none',
       'box-sizing:border-box',
     ].join(';');
@@ -145,7 +169,7 @@ const CURSOR_INIT_SCRIPT = `((theme) => {
     }
 
     fadeTimer = setTimeout(() => {
-      cursorEl.animate([{opacity: 1}, {opacity: 0}], {duration: 300, fill: 'forwards'});
+      cursorEl?.animate([{opacity: 1}, {opacity: 0}], {duration: 300, fill: 'forwards'});
     }, fadeMs);
   };
 
@@ -155,7 +179,7 @@ const CURSOR_INIT_SCRIPT = `((theme) => {
     cursorEl.style.scale = down ? '0.82' : '1';
     if (down) spawnRing(x, y);
   };
-})(${JSON.stringify(CURSOR_THEME)});`;
+}
 
 const DEMO_URL = new URL('./index.html', import.meta.url).href;
 
@@ -210,7 +234,9 @@ try {
     await session.send('Runtime.enable');
     // Register before navigating so the cursor helper is installed on every new document
     // before page scripts run and persists across navigations and reloads.
-    await session.send('Page.addScriptToEvaluateOnNewDocument', {source: CURSOR_INIT_SCRIPT});
+    await session.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `(${installCdpCursor.toString()})(${JSON.stringify(CURSOR_THEME)})`,
+    });
     await session.send('Page.navigate', {url: DEMO_URL});
     await waitForCenter(session, '#alpha');
 
