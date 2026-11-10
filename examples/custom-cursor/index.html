@@ -59,6 +59,24 @@
       font-variant-numeric: tabular-nums;
     }
 
+    button {
+      color: inherit;
+      font: inherit;
+      transition: background 140ms, border-color 140ms, box-shadow 140ms;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      button {
+        transition:
+          background 140ms,
+          border-color 140ms,
+          box-shadow 140ms,
+          scale 210ms ease-out;
+        transition-timing-function: ease, ease, ease, var(--spring);
+      }
+      button:active { scale: 0.96; }
+    }
+
     .presets {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -72,22 +90,7 @@
       border-radius: 14px;
       border: 1.5px solid var(--border);
       background: #0f172a;
-      color: inherit;
-      font: inherit;
       text-align: left;
-      transition: background 140ms, border-color 140ms, box-shadow 140ms;
-    }
-
-    @media (prefers-reduced-motion: no-preference) {
-      .preset {
-        transition:
-          background 140ms,
-          border-color 140ms,
-          box-shadow 140ms,
-          scale 220ms ease-out;
-        transition-timing-function: ease, ease, ease, var(--spring);
-      }
-      .preset:active { scale: 0.97; }
     }
 
     .preset:hover {
@@ -135,22 +138,8 @@
       border-radius: 12px;
       border: 1px solid var(--border);
       background: #1b2742;
-      color: var(--text);
       font: 600 16px/1.2 inherit;
       font-variant-numeric: tabular-nums;
-      transition: background 130ms, border-color 130ms, box-shadow 130ms;
-    }
-
-    @media (prefers-reduced-motion: no-preference) {
-      .control {
-        transition:
-          background 130ms,
-          border-color 130ms,
-          box-shadow 130ms,
-          scale 200ms ease-out;
-        transition-timing-function: ease, ease, ease, var(--spring);
-      }
-      .control:active { scale: 0.96; }
     }
 
     .control:hover {
@@ -175,15 +164,15 @@
     </div>
 
     <div class="presets">
-      <button class="preset active" id="preset-studio" data-preset="studio" style="--swatch: #f43f5e">
+      <button class="preset active" id="preset-studio" data-preset="studio">
         <span class="preset-title"><span class="dot"></span>Studio Arrow</span>
         <span class="preset-sub">Oversized pointer + tilt</span>
       </button>
-      <button class="preset" id="preset-agent" data-preset="agent" style="--swatch: #818cf8">
+      <button class="preset" id="preset-agent" data-preset="agent">
         <span class="preset-title"><span class="dot"></span>Agent Badge</span>
         <span class="preset-sub">Pointer + floating @agent tag</span>
       </button>
-      <button class="preset" id="preset-touch" data-preset="touch" style="--swatch: #22d3ee">
+      <button class="preset" id="preset-touch" data-preset="touch">
         <span class="preset-title"><span class="dot"></span>Touch Puck</span>
         <span class="preset-sub">Circular tap cursor + ripple</span>
       </button>
@@ -198,44 +187,20 @@
 
   <script>
     const PRESETS = {
-      studio: {
-        kind: 'arrow',
-        size: 32,
-        fill: '#f43f5e',
-        stroke: '#ffffff',
-        ringColor: 'rgba(244, 63, 94, 0.95)',
-        ringFill: 'rgba(244, 63, 94, 0.22)',
-        ringSize: 78,
-      },
-      agent: {
-        kind: 'arrow',
-        size: 30,
-        fill: '#6366f1',
-        stroke: '#ffffff',
-        badge: '@agent',
-        ringColor: 'rgba(129, 140, 248, 0.95)',
-        ringFill: 'rgba(99, 102, 241, 0.22)',
-        ringSize: 78,
-      },
-      touch: {
-        kind: 'puck',
-        size: 38,
-        fill: 'rgba(34, 211, 238, 0.32)',
-        stroke: '#22d3ee',
-        ringColor: 'rgba(34, 211, 238, 0.95)',
-        ringFill: 'rgba(6, 182, 212, 0.24)',
-        ringSize: 86,
-      },
+      studio: { kind: 'arrow', color: '#f43f5e', size: 32 },
+      agent:  { kind: 'arrow', color: '#6366f1', size: 30, badge: '@agent' },
+      touch:  { kind: 'puck',  color: '#22d3ee', size: 38 },
     };
 
     const status = document.getElementById('status');
     const presetButtons = document.querySelectorAll('.preset');
 
     for (const btn of presetButtons) {
+      const preset = PRESETS[btn.dataset.preset];
+      btn.style.setProperty('--swatch', preset.color);
       btn.addEventListener('click', () => {
-        const key = btn.dataset.preset;
         presetButtons.forEach(b => b.classList.toggle('active', b === btn));
-        window.setCursorPreset?.(PRESETS[key]);
+        window.setCursorPreset?.(preset);
         status.textContent = 'Active style: ' + btn.querySelector('.preset-title').textContent;
       });
     }
@@ -244,18 +209,15 @@
       status.textContent = 'Hovered preview (no click ring)';
     });
 
-    let locked = false;
     document.getElementById('rec-toggle').addEventListener('click', (e) => {
-      locked = !locked;
-      e.currentTarget.textContent = '120fps Lock: ' + (locked ? 'ON' : 'OFF');
-      e.currentTarget.classList.toggle('on', locked);
-      status.textContent = locked ? 'Toggled 120fps lock ON' : 'Toggled 120fps lock OFF';
+      const on = e.currentTarget.classList.toggle('on');
+      e.currentTarget.textContent = '120fps Lock: ' + (on ? 'ON' : 'OFF');
+      status.textContent = 'Toggled 120fps lock ' + (on ? 'ON' : 'OFF');
     });
 
     let clicks = 0;
     document.getElementById('pulse-btn').addEventListener('click', (e) => {
-      clicks += 1;
-      e.currentTarget.textContent = 'Clicks: ' + clicks;
+      e.currentTarget.textContent = 'Clicks: ' + (++clicks);
       status.textContent = 'Recorded click #' + clicks;
     });
   </script>
