@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/e17ffe7e-e868-40d5-adc9-df85eeb3dae8
 
 _(Thx [github.com/Sam1983Aing/senna-800kg](https://github.com/Sam1983Aing/senna-800kg) for this Gemini Argon generation.)_
 
-Puppeteer v25.10+ wraps this in an experimental `page.record()` (deprecating `page.screencast()`). Playwright is still on `Page.startScreencast` (plus [recent](https://github.com/microsoft/playwright/pull/42929) [upgrades](https://github.com/microsoft/playwright/pull/42752)), but I suspect they'll [get on this](https://github.com/microsoft/playwright/issues/43999) pretty soon…
+Puppeteer v25.10+ wraps this in an experimental `page.record()` (deprecating `page.screencast()`). _(Update: Nov 10th... Playwright now has [an open PR](https://github.com/microsoft/playwright/pull/44046) ([#43999](https://github.com/microsoft/playwright/issues/43999)) bringing `Page.startScreenRecording` to Chromium! :fingers_crossed:)_
 
 Feel free to install this from npm.. or tbh just point your agent at [`src/index.ts`](./src/index.ts) and steal the implementation. It's tiny.
 
@@ -91,7 +91,7 @@ session.close();
 
 ### Visible cursor
 
-With Playwright, `await page.screencast.showActions()` draws its cursor, element highlights, and click badges right into the DOM (without starting `Page.startScreencast`), so `startRecording(page)` captures them natively. To restyle the cursor SVG and click ring yourself, inject a custom DOM overlay instead — see [`examples/custom-cursor/`](./examples/custom-cursor/) (`pointermove`/`pointerdown` tracking for Playwright or manual sessions) and [`examples/raw-cdp-cursor/`](./examples/raw-cdp-cursor/) (raw CDP Bezier choreography).
+With Playwright, `await page.screencast.showActions()` draws its cursor, element highlights, and click badges right into the DOM (without starting `Page.startScreencast`), so `startRecording(page)` captures them natively. To restyle the cursor SVG and click ring yourself, inject a custom DOM overlay instead: see [`examples/custom-cursor/`](./examples/custom-cursor/) (`pointermove`/`pointerdown` tracking for Playwright or manual sessions) and [`examples/raw-cdp-cursor/`](./examples/raw-cdp-cursor/) (raw CDP Bezier choreography).
 
 ## Benchmarks
 
