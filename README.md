@@ -1,6 +1,6 @@
 # chrome-capture
 
-Record a Chrome tab at 60-120fps (up to 2160p) straight to a AV1 `.mp4`. Tab audio too. No ffmpeg.
+Record a Chrome tab at 60-120fps (up to 2160p) straight to an AV1 `.mp4`. Tab audio too. No ffmpeg.
 
 ```bash
 npx chrome-capture https://paulirish.github.io/chrome-capture/ demo.mp4 4s
