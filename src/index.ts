@@ -300,6 +300,12 @@ export async function findChromeBinary(explicitPath?: string): Promise<string> {
         '/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta',
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       ]
+    : platform() === 'win32'
+    ? [
+        join(process.env.LOCALAPPDATA ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        join(process.env['PROGRAMFILES'] ?? 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        join(process.env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      ]
     : ['/usr/bin/google-chrome-unstable', '/usr/bin/google-chrome'];
 
   for (const candidate of candidates) {
@@ -312,12 +318,14 @@ export async function findChromeBinary(explicitPath?: string): Promise<string> {
   const pptrCache = join(homedir(), '.cache', 'puppeteer', 'chrome');
   try {
     const entries = (await readdir(pptrCache))
-      .filter(e => e.startsWith('linux-') || e.startsWith('mac_arm-') || e.startsWith('mac-'))
+      .filter(e => e.startsWith('linux-') || e.startsWith('mac_arm-') || e.startsWith('mac-') || e.startsWith('win32-') || e.startsWith('win64-'))
       .sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
     const newest = entries.at(-1);
     if (newest) {
       const candidate = platform() === 'darwin'
         ? join(pptrCache, newest, 'chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing')
+        : platform() === 'win32'
+        ? join(pptrCache, newest, newest.startsWith('win32-') ? 'chrome-win32' : 'chrome-win64', 'chrome.exe')
         : join(pptrCache, newest, 'chrome-linux64', 'chrome');
       await access(candidate);
       return candidate;
