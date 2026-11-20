@@ -45,6 +45,7 @@ Options:
   --no-audio                  Disable audio track recording
   --headful                   Run in headful mode (auto-enabled on macOS when --fps > 60)
   --headless                  Run in --headless=new mode (default for <= 60fps)
+  --uncap                     Disable frame-rate limit + GPU vsync (headless Linux only, see README)
   --with-devtools             Open screencast + DevTools side-by-side in inspector.html
   --chrome=<path>             Path to Google Chrome executable
   -h, --help                  Show this help message
@@ -67,6 +68,7 @@ Options:
       headful: {type: 'boolean'},
       headed: {type: 'boolean'},
       headless: {type: 'boolean'},
+      uncap: {type: 'boolean'},
       'with-devtools': {type: 'boolean'},
       chrome: {type: 'string'},
       url: {type: 'string'},
@@ -91,6 +93,7 @@ Options:
   const audio = parsed.values.audio ? true : !parsed.values['no-audio'];
   const headful = Boolean(parsed.values.headful || parsed.values.headed);
   const headless = parsed.values.headless || (!headful && !(platform() === 'darwin' && frameRate > 60));
+  const uncap = Boolean(parsed.values.uncap);
   const withDevTools = Boolean(parsed.values['with-devtools']);
   const explicitChrome = parsed.values.chrome;
 
@@ -105,6 +108,7 @@ Options:
     height,
     headless,
     audio,
+    uncap,
     extraArgs,
     url,
   });
